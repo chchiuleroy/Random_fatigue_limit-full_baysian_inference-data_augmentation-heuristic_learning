@@ -1,0 +1,2 @@
+# Random_fatigue_limit-full_baysian_inference-data_augmentation-heuristic_learning
+using full_baysian_inference+data_augmentation to solve random_fatigue_limit model
