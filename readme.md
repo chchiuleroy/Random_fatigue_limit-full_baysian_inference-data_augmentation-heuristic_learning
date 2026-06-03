@@ -1,8 +1,9 @@
-# Full Bayesian Inference for Random Fatigue Limit Model with Model Z-Score Prediction
+# Full Bayesian RFL Model: Model Z-Score Prediction with Heuristic Learning (State → Strategy → Feedback) Pipeline Selection
 
 > **Roy (2026-06-02)**  
 > 以全貝式推論（Full Bayesian Inference）改進 Random Fatigue Limit（RFL）模型的個別壽命預測，  
-> 提出以模型理論矩（Model Z-Score）取代樣本統計量，並以 Heuristic Learning 驗證最佳管線。
+> 提出以模型理論矩（Model Z-Score）取代樣本統計量，  
+> 並以 Heuristic Learning 三階段框架（**State** 後驗資訊 → **Strategy** H0–H4 Heuristic → **Feedback** −ASSE）搜尋最佳預測管線。
 
 ---
 
