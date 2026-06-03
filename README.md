@@ -81,7 +81,7 @@ $$\ln N_i \mid \Delta_i \sim \text{SEV}(\beta_0 + \beta_1 \ln(S_i - \Delta_i),\ 
 
 $$\Delta_i \sim \text{LogNormal}(\mu_\Delta, \sigma_\Delta)$$
 
-其中 Smallest Extreme Value→(SEV) 是 Weibull 的 log 版本，$\N_i \$ 是失效循環數，$\S_i \$ 是施加應力。
+其中 Smallest Extreme Value→(SEV) 是 Weibull 的 log 版本，$$N_i$$ 是失效循環數，$$S_i$$ 是施加應力。
 
 **先前研究局限**：
 - P&M (1999) 使用 Laplace 近似推論，預測精度有限
