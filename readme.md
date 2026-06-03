@@ -36,7 +36,7 @@
 | Hamiltonian Monte Carlo→(HMC) | 哈密頓蒙地卡羅——NUTS 的底層演算法 |
 | Markov Chain Monte Carlo→(MCMC) | 馬可夫鏈蒙地卡羅，通用後驗取樣框架 |
 | Heuristic Learning→(HL) | 啟發式學習——系統搜尋最佳預測管線 |
-| LogNormal→(LN) | 對數常態分佈，$\Delta_i$ 的先驗分佈族 |
+| LogNormal→(LN) | 對數常態分佈， $\Delta_i$ 的先驗分佈族 |
 
 ### 預測誤差指標
 
@@ -81,7 +81,7 @@ $$\ln N_i \mid \Delta_i \sim \text{SEV}(\beta_0 + \beta_1 \ln(S_i - \Delta_i),\;
 
 $$\Delta_i \sim \text{LogNormal}(\mu_\Delta, \sigma_\Delta)$$
 
-其中 Smallest Extreme Value→(SEV) 是 Weibull 的 log 版本，$N_i$ 是失效循環數，$S_i$ 是施加應力。
+其中 Smallest Extreme Value→(SEV) 是 Weibull 的 log 版本， $N_i$ 是失效循環數， $S_i$ 是施加應力。
 
 **先前研究局限**：
 - P&M (1999) 使用 Laplace 近似推論，預測精度有限
@@ -99,11 +99,11 @@ Chiu 論文用組內樣本統計量估計個別試件的疲勞極限：
 $$\omega_{ij} = \frac{y_{ij} - \bar{y}_j}{s_j}$$
 
 **問題一：樣本量不足**
-每個應力水準只有 $n_j = 15$ 個觀測，$\bar{y}_j$ 和 $s_j$ 的估計不穩定（標準誤較大）。
+每個應力水準只有 $n_j = 15$ 個觀測， $\bar{y}_j$ 和 $s_j$ 的估計不穩定（標準誤較大）。
 
 **問題二：方差混合不可分**
 
-$$s_j^2 \approx \underbrace{\beta_1^2 \cdot \text{Var}[\ln(S_j - \Delta)]}_{\Delta \text{ 個體差異}} + \underbrace{\frac{\pi^2 \sigma^2}{6}}_{\text{SEV 殘差}}$$
+$$s_j^2 \approx \underbrace{\beta_1^2 \cdot \text{Var}[\ln(S_j - \Delta)]}_{\text{individual }\Delta} + \underbrace{\frac{\pi^2 \sigma^2}{6}}_{\text{SEV residual}}$$
 
 樣本 $s_j^2$ 混合了兩個來源，無法將個別 $\Delta_i$ 的不確定性從殘差 $\sigma$ 中分離。
 
@@ -189,15 +189,15 @@ HL（Weng, 2026）將問題拆解為三個明確階段，系統搜尋最佳預�
 
 **Stage 1 — State（狀態）**：MCMC 推論完成後可用的全部資訊
 
-$$\text{State} = \bigl\{\,\hat{\theta},\; \{E(\ln N \mid S_j),\, \sqrt{V(\ln N \mid S_j)}\}_{j=1}^5,\; \{(y_{ij}, S_j)\} \bigr\}$$
+$$\text{State} = \Bigl\lbrace\hat{\theta},\; \lbrace E(\ln N \mid S_j),\, \sqrt{V(\ln N \mid S_j)}\rbrace_{j=1}^5,\; \lbrace(y_{ij}, S_j)\rbrace \Bigr\rbrace$$
 
 - $\hat{\theta} = (\hat{\beta}_0, \hat{\beta}_1, \hat{\sigma}, \hat{\mu}_\Delta, \hat{\sigma}_\Delta)$：後驗均值（MCMC 輸出）
 - 各應力水準的理論均值與標準差：由 GL 積分從 $\hat{\theta}$ 計算
-- 原始觀測資料 $\{(y_{ij}, S_j)\}$：用於最終計算 ASSE
+- 原始觀測資料 $\lbrace(y_{ij}, S_j)\rbrace$：用於最終計算 ASSE
 
 **Stage 2 — Strategy（策略）**：給定 State，選擇一個 Heuristic 規則將 $y_{ij}$ 映射至 $\hat{y}_{ij}$
 
-$$\text{Strategy}_k : \text{State} \times y_{ij} \;\longrightarrow\; \hat{y}_{ij} \qquad k \in \{H0, H1, H2, H3, H4\}$$
+$$\text{Strategy}_k : \text{State} \times y_{ij} \;\longrightarrow\; \hat{y}_{ij} \qquad k \in \lbrace H0, H1, H2, H3, H4 \rbrace$$
 
 **Stage 3 — Feedback（回饋）**：評估 Strategy 的好壞，驅動選擇
 
@@ -217,11 +217,11 @@ HL 枚舉 H0–H4 五個候選 Strategy，取 Reward 最大者為最終管線。
 
 ### 3.4 含 Censoring 資料的推廣
 
-本研究 P&M (1999) 資料全為失效觀測（$n=75$），無設限。若資料存在設限觀測，需修改 Likelihood 貢獻。
+本研究 P&M (1999) 資料全為失效觀測（ $n=75$），無設限。若資料存在設限觀測，需修改 Likelihood 貢獻。
 
 #### 設定
 
-設 $\delta_i \in \{0, 1\}$ 為失效指示：$\delta_i = 1$ 表示觀測到失效（$y_i = \ln N_i$ 已知），$\delta_i = 0$ 表示在 $c_i$ 處設限（$\ln N_i > c_i$，真實值未知）。
+設 $\delta_i \in \lbrace 0, 1\rbrace$ 為失效指示： $\delta_i = 1$ 表示觀測到失效（ $y_i = \ln N_i$ 已知）， $\delta_i = 0$ 表示在 $c_i$ 處設限（ $\ln N_i > c_i$，真實值未知）。
 
 #### 修改後的聯合 Likelihood
 
@@ -244,7 +244,7 @@ $$S_{\text{Normal}}(c_i \mid \Delta_i, \theta) = 1 - \Phi\!\left(\frac{c_i - \mu
 
 #### DA 框架的優勢
 
-設限觀測在 DA 框架中自然處理：$\Delta_i$ 仍被明確取樣，只需把 Likelihood 貢獻從 $f(y_i \mid \cdot)$ 換成 $S(c_i \mid \cdot)$，**不需對每個設限觀測額外做數值積分**，NCP 及 NUTS 結構完全不變。
+設限觀測在 DA 框架中自然處理： $\Delta_i$ 仍被明確取樣，只需把 Likelihood 貢獻從 $f(y_i \mid \cdot)$ 換成 $S(c_i \mid \cdot)$，**不需對每個設限觀測額外做數值積分**，NCP 及 NUTS 結構完全不變。
 
 #### PyMC 實作
 
@@ -300,7 +300,7 @@ pm.Potential('likelihood', loglik.sum())
 
 Gelman-Rubin 收斂診斷，比較「鏈內方差」與「鏈間方差」：
 
-$$\hat{R} = \sqrt{\frac{\text{鏈間方差} + \text{鏈內方差（加權）}}{\text{鏈內方差}}}$$
+$$\hat{R} = \sqrt{\frac{\text{between-chain var} + \text{within-chain var (weighted)}}{\text{within-chain var}}}$$
 
 - $\hat{R} = 1$：所有 chain 完全收斂到同一分佈
 - $\hat{R} < 1.01$：嚴格標準，收斂良好
@@ -347,7 +347,7 @@ $$\text{LOO-ELPD} = \sum_{i=1}^{75} \log p(y_i \mid \mathbf{y}_{-i})$$
 - 值越大（越靠近 0）= 預測能力越好
 - 差值 $\Delta\text{ELPD} > 2$：通常視為有意義的差距
 
-**本研究**：SEV+LN = −76.39，Normal+LN = −79.38，$\Delta = 2.99$；SEV 的尾部行為更符合疲勞壽命資料，預測能力優於 Normal。
+**本研究**：SEV+LN = −76.39，Normal+LN = −79.38， $\Delta = 2.99$；SEV 的尾部行為更符合疲勞壽命資料，預測能力優於 Normal。
 
 ### 5.2 後驗參數估計（SEV + LogNormal）
 
@@ -374,8 +374,8 @@ $$\text{LOO-ELPD} = \sum_{i=1}^{75} \log p(y_i \mid \mathbf{y}_{-i})$$
 
 | 預測公式 | ASSE |
 |---------|------|
-| SEV + Euler 修正（$\hat{y} = \mu - \hat{\sigma}\gamma_E$） | **5.75** |
-| 無修正（$\hat{y} = \mu$） | 10.19 |
+| SEV + Euler 修正（ $\hat{y} = \mu - \hat{\sigma}\gamma_E$） | **5.75** |
+| 無修正（ $\hat{y} = \mu$） | 10.19 |
 
 > Plugin y-ASSE = 5.75 幾乎等於 MLE SEV+INLA 的 in-sample ASSE（5.76），確認後驗均值正確重現 MLE。  
 > 後驗均值 ASSE = 13.83 較高，因為 $\sigma$ 的後驗不確定性（SD = 0.07）使部分樣本的預測較差——這是「帶完整參數不確定性的誠實 ASSE」。
@@ -410,7 +410,7 @@ $$\text{LOO-ELPD} = \sum_{i=1}^{75} \log p(y_i \mid \mathbf{y}_{-i})$$
 | H3：Per-group z 校準 | 10.93 | 14.05 | 最差 |
 | H4：DA 後驗 E[Δᵢ\|data] | 5.80 | 9.55 | 中等 |
 
-**關鍵發現**：H1（精確邊際 CDF）比 H0（Normal 近似 $\Phi(z)$）更差。$\Phi(z)$ 對極端 z 值的隱性 shrinkage（Normal 尾部比真實邊際分佈更保守）在 n=75 的有限樣本下是有用的正規化。這是 **bias-variance tradeoff** 的典型案例：「更正確」的方法不一定在有限樣本下更好。
+**關鍵發現**：H1（精確邊際 CDF）比 H0（Normal 近似 $\Phi(z)$）更差。 $\Phi(z)$ 對極端 z 值的隱性 shrinkage（Normal 尾部比真實邊際分佈更保守）在 n=75 的有限樣本下是有用的正規化。這是 **bias-variance tradeoff** 的典型案例：「更正確」的方法不一定在有限樣本下更好。
 
 ---
 
@@ -489,15 +489,15 @@ $V(\ln N \mid S_j) = \beta_1^2 \cdot \text{Var}[\ln(S_j - \Delta)] + \pi^2\sigma
 
 $$p(\Delta_i \mid y_i, \theta) \propto f(y_i \mid \Delta_i, \theta) \cdot g(\Delta_i \mid \theta)$$
 
-本方法用 marginal percentile 代理後驗的「位置」——這是把反問題（$y_i \to \Delta_i$）以矩匹配求解的優雅做法，避免對每個 $i$ 做數值積分，且比 DA 後驗 $E[\Delta_i \mid \mathbf{y}, \theta^{(s)}]$（H4）有更低的 ASSE。
+本方法用 marginal percentile 代理後驗的「位置」——這是把反問題（ $y_i \to \Delta_i$）以矩匹配求解的優雅做法，避免對每個 $i$ 做數值積分，且比 DA 後驗 $E[\Delta_i \mid \mathbf{y}, \theta^{(s)}]$（H4）有更低的 ASSE。
 
 ### 7.3 Φ(z) 的隱性正規化效果
 
 精確邊際 CDF（H1）比 $\Phi(z)$（H0）更差，原因在於：
 
-$$\text{真實邊際分佈} = \int f_{\text{SEV}}(y; \mu_\Delta(\Delta), \sigma) \cdot g(\Delta) \, d\Delta \neq \text{Normal}$$
+$$\text{true marginal} = \int f_{\text{SEV}}(y; \mu_\Delta(\Delta), \sigma) \cdot g(\Delta) \, d\Delta \neq \text{Normal}$$
 
-真實邊際在尾部比 Normal 更厚，導致極端 $z$ 值對應的 percentile 更高，$\hat{\Delta}$ 更極端，預測誤差更大。$\Phi(z)$ 把極端 $z$ 向均值壓縮（隱性 shrinkage），在 $n=75$ 的有限樣本下有效降低 variance。
+真實邊際在尾部比 Normal 更厚，導致極端 $z$ 值對應的 percentile 更高， $\hat{\Delta}$ 更極端，預測誤差更大。 $\Phi(z)$ 把極端 $z$ 向均值壓縮（隱性 shrinkage），在 $n=75$ 的有限樣本下有效降低 variance。
 
 ---
 
