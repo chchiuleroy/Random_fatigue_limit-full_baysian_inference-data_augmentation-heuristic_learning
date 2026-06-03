@@ -115,7 +115,7 @@ $s_j$ 不隨應力水準 $S_j$ 變化，但理論上 $V(\ln N \mid S_j)$ 因 $\t
 
 > **用全貝式後驗推導的理論矩取代樣本統計量。**
 
-全貝式推論給出後驗 $\hat{\theta} = (\hat{\beta}_0, \hat{\beta}_1, \hat{\sigma}, \hat{\mu}_\Delta, \hat{\sigma}_\Delta)$，可計算每個應力水準的精確理論均值和方差，正確分離 $\Delta$ 變異和殘差 $\sigma$ 的貢獻。
+全貝式推論給出後驗 $$\hat{\theta} = (\hat{\beta}_0, \hat{\beta}_1, \hat{\sigma}, \hat{\mu}_\Delta, \hat{\sigma}_\Delta)$$，可計算每個應力水準的精確理論均值和方差，正確分離 $\Delta$ 變異和殘差 $\sigma$ 的貢獻。
 
 ---
 
