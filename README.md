@@ -354,13 +354,13 @@ $$\text{LOO-ELPD} = \sum_{i=1}^{75} \log p(y_i \mid \mathbf{y}_{-i})$$
 
 ### 5.2 Posterior Parameter Estimates (SEV + LogNormal)
 
-| Parameter | Posterior Mean | Posterior SD | 95% CI | MLE Reference |
-|-----------|:--------------:|:------------:|--------|:-------------:|
-| $\beta_0$ | −9.286 | 0.427 | — | −9.370 |
-| $\beta_1$ | −8.746 | 1.355 | — | −8.534 |
-| $\sigma$ | 0.195 | 0.072 | — | 0.190 |
-| $\mu_\Delta$ | −0.660 | 0.082 | — | −0.644 |
-| $\sigma_\Delta$ | 0.038 | 0.006 | — | 0.036 |
+| Parameter | Posterior Mean | Posterior SD | MLE Reference |
+|-----------|:--------------:|:------------:|:-------------:|
+| $\beta_0$ | −9.286 | 0.427 | −9.370 |
+| $\beta_1$ | −8.746 | 1.355 | −8.534 |
+| $\sigma$ | 0.195 | 0.072 | 0.190 |
+| $\mu_\Delta$ | −0.660 | 0.082 | −0.644 |
+| $\sigma_\Delta$ | 0.038 | 0.006 | 0.036 |
 
 > Posterior means nearly reproduce MLE — with n=75, Uniform priors are dominated by the likelihood, giving high agreement between Bayesian and frequentist results.
 
