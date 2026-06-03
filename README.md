@@ -77,7 +77,7 @@ The **Random Fatigue Limit (RFL) model** was proposed by Pascual & Meeker (1999)
 
 ### Original Model (P&M 1999)
 
-$$\ln N_i \mid \Delta_i \sim \text{SEV}(\beta_0 + \beta_1 \ln(S_i - \Delta_i),\; \sigma)$$
+$$\ln N_i \mid \Delta_i \sim \text{SEV}(\beta_0 + \beta_1 \ln(S_i - \Delta_i), \sigma)$$
 
 $$\Delta_i \sim \text{LogNormal}(\mu_\Delta, \sigma_\Delta)$$
 
@@ -166,7 +166,7 @@ Decoupling the prior from hyperparameters $(\mu_\Delta, \sigma_\Delta)$ flattens
 
 **Theoretical mean** (32-point Gauss-Legendre integration):
 
-$$E(\ln N \mid S_j) = \hat{\beta}_0 - \hat{\sigma}\gamma_E + \hat{\beta}_1 \int_0^{S_j} \ln(S_j - \Delta)\, g(\Delta \mid \hat{\mu}_\Delta, \hat{\sigma}_\Delta)\, d\Delta$$
+$$E(\ln N \mid S_j) = \hat{\beta}_0 - \hat{\sigma}\gamma_E + \hat{\beta}_1 \int_0^{S_j} \ln(S_j - \Delta) \cdot g(\Delta \mid \hat{\mu}_\Delta, \hat{\sigma}_\Delta) \thinspace d\Delta$$
 
 where $\gamma_E = 0.5772$ (Euler-Mascheroni constant).
 
@@ -192,7 +192,7 @@ HL (Weng, 2026) decomposes the problem into three explicit stages to systematica
 
 **Stage 1 — State:** All information available after MCMC inference
 
-$$\text{State} = \Bigl\lbrace\hat{\theta},\; \lbrace E(\ln N \mid S_j),\, \sqrt{V(\ln N \mid S_j)}\rbrace_{j=1}^5,\; \lbrace(y_{ij}, S_j)\rbrace \Bigr\rbrace$$
+$$\text{State} = \Bigl\lbrace \hat{\theta}, \lbrace E(\ln N \mid S_j), \sqrt{V(\ln N \mid S_j)}\rbrace_{j=1}^5, \lbrace(y_{ij}, S_j)\rbrace \Bigr\rbrace$$
 
 - $\hat{\theta}$: posterior mean (MCMC output; 5 parameters, see Section 2.2)
 - Theoretical mean and SD per stress level: computed from $\hat{\theta}$ via GL integration
@@ -200,7 +200,7 @@ $$\text{State} = \Bigl\lbrace\hat{\theta},\; \lbrace E(\ln N \mid S_j),\, \sqrt{
 
 **Stage 2 — Strategy:** Given the State, choose a heuristic rule mapping $y_{ij}$ to $\hat{y}_{ij}$
 
-$$\text{Strategy}_k : \text{State} \times y_{ij} \;\longrightarrow\; \hat{y}_{ij} \qquad k \in \lbrace H0, H1, H2, H3, H4 \rbrace$$
+$$\text{Strategy}_k : \text{State} \times y_{ij} \longrightarrow \hat{y}_{ij} \qquad k \in \lbrace H0, H1, H2, H3, H4 \rbrace$$
 
 **Stage 3 — Feedback:** Evaluate strategy quality to drive selection
 
@@ -228,13 +228,13 @@ Let $\delta_i \in \lbrace 0, 1\rbrace$ be the failure indicator: $\delta_i = 1$ 
 
 #### Modified Joint Likelihood
 
-$$p(\mathbf{y},\boldsymbol{\delta} \mid \boldsymbol{\Delta}, \theta) = \prod_{i:\,\delta_i=1} f(y_i \mid \Delta_i, \theta) \;\cdot\; \prod_{i:\,\delta_i=0} S(c_i \mid \Delta_i, \theta)$$
+$$p(\mathbf{y},\boldsymbol{\delta} \mid \boldsymbol{\Delta}, \theta) = \prod_{i:\delta_i=1} f(y_i \mid \Delta_i, \theta) \cdot \prod_{i:\delta_i=0} S(c_i \mid \Delta_i, \theta)$$
 
 Survival function by model distribution:
 
-$$S_{\text{SEV}}(c_i \mid \Delta_i, \theta) = \exp\!\left(-\exp\!\left(\frac{c_i - \mu_i}{\sigma}\right)\right), \qquad \mu_i = \beta_0 + \beta_1\ln(S_j - \Delta_i)$$
+$$S_{\text{SEV}}(c_i \mid \Delta_i, \theta) = \exp\left(-\exp\left(\frac{c_i - \mu_i}{\sigma}\right)\right), \qquad \mu_i = \beta_0 + \beta_1\ln(S_j - \Delta_i)$$
 
-$$S_{\text{Normal}}(c_i \mid \Delta_i, \theta) = 1 - \Phi\!\left(\frac{c_i - \mu_i}{\sigma}\right)$$
+$$S_{\text{Normal}}(c_i \mid \Delta_i, \theta) = 1 - \Phi\left(\frac{c_i - \mu_i}{\sigma}\right)$$
 
 #### Four Censoring Types
 
@@ -268,7 +268,7 @@ pm.Potential('likelihood', loglik.sum())
 The true $y_i$ is unknown for censored observations. Two approaches:
 
 1. **Exclude censored observations:** Compute ASSE using only $\delta_i = 1$ failures (most common)
-2. **Conditional expectation imputation:** Substitute $E[\ln N \mid \ln N > c_i,\, \Delta_i, \theta]$ for $y_i$, incorporating censored observations into ASSE
+2. **Conditional expectation imputation:** Substitute $E[\ln N \mid \ln N > c_i, \Delta_i, \theta]$ for $y_i$, incorporating censored observations into ASSE
 
 ---
 
@@ -498,7 +498,7 @@ This method uses the marginal percentile as a proxy for the posterior's "locatio
 
 The exact marginal CDF (H1) performs worse than $\Phi(z)$ (H0) because:
 
-$$\text{true marginal} = \int f_{\text{SEV}}(y; \mu_\Delta(\Delta), \sigma) \cdot g(\Delta) \, d\Delta \neq \text{Normal}$$
+$$\text{true marginal} = \int f_{\text{SEV}}(y; \mu_\Delta(\Delta), \sigma) \cdot g(\Delta) \thinspace d\Delta \neq \text{Normal}$$
 
 The true marginal has heavier tails than Normal, causing extreme z-values to map to higher percentiles, more extreme $\hat{\Delta}$ estimates, and larger prediction errors. $\Phi(z)$ shrinks extreme z-values toward the mean (implicit shrinkage), effectively reducing variance in the finite sample of n=75.
 
