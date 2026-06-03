@@ -1,8 +1,9 @@
-# Full Bayesian Inference for Random Fatigue Limit Model with Model Z-Score Prediction
+# Full Bayesian RFL Model: Model Z-Score Prediction with Heuristic Learning (State → Strategy → Feedback) Pipeline Selection
 
 > **Roy (2026-06-02)**  
 > 以全貝式推論（Full Bayesian Inference）改進 Random Fatigue Limit（RFL）模型的個別壽命預測，  
-> 提出以模型理論矩（Model Z-Score）取代樣本統計量，並以 Heuristic Learning 驗證最佳管線。
+> 提出以模型理論矩（Model Z-Score）取代樣本統計量，  
+> 並以 Heuristic Learning 三階段框架（**State** 後驗資訊 → **Strategy** H0–H4 Heuristic → **Feedback** −ASSE）搜尋最佳預測管線。
 
 ---
 
@@ -184,11 +185,25 @@ $$V(\ln N \mid S_j) = \hat{\beta}_1^2 \cdot \underbrace{\text{Var}[\ln(S_j - \De
 
 ### 3.3 Heuristic Learning→(HL) 驗證
 
-HL 把整個預測管線視為可搜尋的「Policy」：
+HL（Weng, 2026）將問題拆解為三個明確階段，系統搜尋最佳預測規則：
 
-- **Policy** = `(θ̂, data) → ŷ_ij → ASSE` 的映射函數
-- **Reward** = $-\text{ASSE}$
-- **搜尋空間** = 步驟 2–4 的替代 Heuristic
+**Stage 1 — State（狀態）**：MCMC 推論完成後可用的全部資訊
+
+$$\text{State} = \bigl\{\,\hat{\theta},\; \{E(\ln N \mid S_j),\, \sqrt{V(\ln N \mid S_j)}\}_{j=1}^5,\; \{(y_{ij}, S_j)\} \bigr\}$$
+
+- $\hat{\theta} = (\hat{\beta}_0, \hat{\beta}_1, \hat{\sigma}, \hat{\mu}_\Delta, \hat{\sigma}_\Delta)$：後驗均值（MCMC 輸出）
+- 各應力水準的理論均值與標準差：由 GL 積分從 $\hat{\theta}$ 計算
+- 原始觀測資料 $\{(y_{ij}, S_j)\}$：用於最終計算 ASSE
+
+**Stage 2 — Strategy（策略）**：給定 State，選擇一個 Heuristic 規則將 $y_{ij}$ 映射至 $\hat{y}_{ij}$
+
+$$\text{Strategy}_k : \text{State} \times y_{ij} \;\longrightarrow\; \hat{y}_{ij} \qquad k \in \{H0, H1, H2, H3, H4\}$$
+
+**Stage 3 — Feedback（回饋）**：評估 Strategy 的好壞，驅動選擇
+
+$$\text{Reward}(k) = -\text{ASSE}(k) = -\sum_{i,j} |y_{ij} - \hat{y}_{ij}^{(k)}|$$
+
+HL 枚舉 H0–H4 五個候選 Strategy，取 Reward 最大者為最終管線。
 
 | Heuristic | 步驟 2 (percentile) | 步驟 3–4 (Δ 推算) |
 |-----------|--------------------|--------------------|
