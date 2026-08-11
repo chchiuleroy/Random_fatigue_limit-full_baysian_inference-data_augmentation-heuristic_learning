@@ -226,7 +226,7 @@ def H4_da_posterior(idata, error='sev'):
 # 4. PyMC DA+NCP 模型（SEV+LN and Normal+LN）
 # ═══════════════════════════════════════════════════════════════════════
 
-def build_model():
+def build_model(error='sev'):
     upper_mu_d = float(np.log(MIN_S)-0.05)
     with pm.Model() as m:
         b0=pm.Uniform("beta0",lower=-50.,upper=50.)
@@ -239,10 +239,15 @@ def build_model():
         z_d=pm.Normal("z_delta",mu=0.,sigma=1.,shape=N_OBS)
         ld=md+sd*z_d; delta=pm.Deterministic("delta",pt.exp(ld))
         mu_c=b0+b1*pt.log(pt.maximum(S_OBS-delta,1e-8))
-        z_f=(Y_fail-mu_c[fail_idx])/sigma
-        pm.Potential("of",pt.sum(-pt.log(sigma)+z_f-pt.exp(pt.clip(z_f,-500,20))))
-        z_c=(Y_cens-mu_c[cens_idx])/sigma
-        pm.Potential("oc",pt.sum(-pt.exp(pt.clip(z_c,-500,20))))
+        if error=='normal':
+            pm.Normal("of", mu=mu_c[fail_idx], sigma=sigma, observed=Y_fail)
+            z_c=(Y_cens-mu_c[cens_idx])/sigma
+            pm.Potential("oc", pt.sum(pt.log(0.5*pt.erfc(z_c/pt.sqrt(2.)))))
+        else:  # SEV
+            z_f=(Y_fail-mu_c[fail_idx])/sigma
+            pm.Potential("of",pt.sum(-pt.log(sigma)+z_f-pt.exp(pt.clip(z_f,-500,20))))
+            z_c=(Y_cens-mu_c[cens_idx])/sigma
+            pm.Potential("oc",pt.sum(-pt.exp(pt.clip(z_c,-500,20))))
     return m
 
 
@@ -255,10 +260,10 @@ if __name__ == "__main__":
     print("  HL for RFL: Heuristic Search on y-ASSE Mapping Pipeline")
     print("="*70)
 
-    # ── 全貝式採樣（SEV+LN，與 Normal+LN 共享同一 DA 結構） ───────────
+    # ── 全貝式採樣（SEV+LN 與 Normal+LN 各自獨立建模，共用同一 DA 結構） ──
     print("\n[1] Bayesian Inference: DA+NCP+NUTS (SEV+LogNormal)...")
-    model = build_model()
-    with model:
+    model_sev = build_model(error='sev')
+    with model_sev:
         idata_sev = pm.sample(
             draws=2000, tune=2000, chains=4, cores=4,
             initvals=dict(beta0=-9.4,beta1=-8.5,log_sigma=np.log(0.19),
@@ -274,7 +279,8 @@ if __name__ == "__main__":
           f"mu_d={mds:.4f} sd_d={sdds:.4f}")
 
     print("\n[2] Bayesian Inference: DA+NCP+NUTS (Normal+LogNormal)...")
-    with model:
+    model_nor = build_model(error='normal')
+    with model_nor:
         idata_nor = pm.sample(
             draws=2000, tune=2000, chains=4, cores=4,
             initvals=dict(beta0=-9.2,beta1=-8.1,log_sigma=np.log(0.60),
@@ -308,7 +314,7 @@ if __name__ == "__main__":
     rows.append(('H1: Exact marginal CDF', h1_s, h1_n))
 
     h2_s = H2_cornish_fisher(b0s,b1s,ss,mds,sdds,'sev')
-    h2_n = H2_cornish_fisher(b0n,b1n,sn,mdn,sdds,'normal')
+    h2_n = H2_cornish_fisher(b0n,b1n,sn,mdn,sddn,'normal')
     print(f"  {'H2: Cornish-Fisher skewness correction':<45} {h2_s:>9.4f} {h2_n:>9.4f}")
     rows.append(('H2: Cornish-Fisher', h2_s, h2_n))
 

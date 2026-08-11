@@ -155,8 +155,9 @@ def model_zscore_asse(b0, b1, sig, mu_d, sd_d, error='sev', verbose=False):
 # 3. 樣本 z-score ASSE (Chiu baseline)
 # ═══════════════════════════════════════════════════════════════════════
 
-def sample_zscore_asse(b0, b1, sig, mu_d, sd_d):
+def sample_zscore_asse(b0, b1, sig, mu_d, sd_d, error='sev'):
     """Chiu (2005) 樣本 z-score ASSE — 用組內樣本均值/標準差。"""
+    euler_corr = EULER_GAMMA if error == 'sev' else 0.0
     asse_parts = []
     for s_j in S_UNIQ:
         idx_j = np.where((S_OBS == s_j) & (EVENT == 1))[0]
@@ -166,7 +167,7 @@ def sample_zscore_asse(b0, b1, sig, mu_d, sd_d):
         z_j   = (y_j - y_j.mean()) / y_j.std(ddof=1)   # sample z-score
         D_hat = np.exp(mu_d + sd_d * z_j)
         D_hat = np.clip(D_hat, 1e-6, s_j * 0.999)
-        y_hat = b0 + b1 * np.log(s_j - D_hat) - sig * EULER_GAMMA
+        y_hat = b0 + b1 * np.log(s_j - D_hat) - sig * euler_corr
         asse_parts.append(np.abs(y_j - y_hat).sum())
     return sum(asse_parts)
 
@@ -175,7 +176,7 @@ def sample_zscore_asse(b0, b1, sig, mu_d, sd_d):
 # 4. PyMC DA+NCP 模型（SEV+LogNormal）
 # ═══════════════════════════════════════════════════════════════════════
 
-def build_model():
+def build_model(error='sev'):
     upper_mu_d = float(np.log(MIN_S) - 0.05)
     with pm.Model() as m:
         b0      = pm.Uniform("beta0",      lower=-50.,         upper=50.)
@@ -189,12 +190,20 @@ def build_model():
         log_delta = mu_d + sigma_d * z_delta
         delta     = pm.Deterministic("delta", pt.exp(log_delta))
         mu_cond   = b0 + b1 * pt.log(pt.maximum(S_OBS - delta, 1e-8))
-        z_f = (Y_fail - mu_cond[fail_idx]) / sigma
-        pm.Potential("obs_fail",
-            pt.sum(-pt.log(sigma) + z_f - pt.exp(pt.clip(z_f,-500,20))))
-        z_c = (Y_cens - mu_cond[cens_idx]) / sigma
-        pm.Potential("obs_cens",
-            pt.sum(-pt.exp(pt.clip(z_c,-500,20))))
+        if error == 'normal':
+            # Failures: ln N_i ~ Normal(mu_cond, sigma)
+            pm.Normal("obs_fail", mu=mu_cond[fail_idx], sigma=sigma, observed=Y_fail)
+            # Censored: log(1 - Phi(z)) = log(0.5*erfc(z/sqrt(2)))
+            z_c   = (Y_cens - mu_cond[cens_idx]) / sigma
+            log_s = pt.log(0.5 * pt.erfc(z_c / pt.sqrt(2.)))
+            pm.Potential("obs_cens", pt.sum(log_s))
+        else:  # SEV: log f = -log(sigma) + z - exp(z), log S = -exp(z)
+            z_f = (Y_fail - mu_cond[fail_idx]) / sigma
+            pm.Potential("obs_fail",
+                pt.sum(-pt.log(sigma) + z_f - pt.exp(pt.clip(z_f,-500,20))))
+            z_c = (Y_cens - mu_cond[cens_idx]) / sigma
+            pm.Potential("obs_cens",
+                pt.sum(-pt.exp(pt.clip(z_c,-500,20))))
     return m
 
 
@@ -204,7 +213,7 @@ def build_model():
 
 def run_one(error, init_sig):
     """Run DA+NCP for one error type, return (idata, pm_dict)."""
-    model = build_model()
+    model = build_model(error=error)
     with model:
         idata = pm.sample(
             draws=2000, tune=2000, chains=4, cores=4,
@@ -235,7 +244,7 @@ def post_asse(idata, error, n_samp=500):
     idx   = np.arange(0, n_s, stride)
     model_z = [model_zscore_asse(b0_s[k],b1_s[k],sig_s[k],mud_s[k],sdd_s[k],error=error)
                for k in idx]
-    samp_z  = [sample_zscore_asse(b0_s[k],b1_s[k],sig_s[k],mud_s[k],sdd_s[k])
+    samp_z  = [sample_zscore_asse(b0_s[k],b1_s[k],sig_s[k],mud_s[k],sdd_s[k],error=error)
                for k in idx]
     return np.array(model_z), np.array(samp_z)
 
@@ -268,7 +277,7 @@ if __name__ == "__main__":
         print(summ[["mean","sd","r_hat","ess_bulk"]].to_string())
 
         # Plugin ASSE
-        asse_samp = sample_zscore_asse(b0p, b1p, sigp, mudp, sddp)
+        asse_samp = sample_zscore_asse(b0p, b1p, sigp, mudp, sddp, error=error)
         asse_model, ev_info = model_zscore_asse(
             b0p, b1p, sigp, mudp, sddp, error=error, verbose=True)
 

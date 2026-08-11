@@ -279,10 +279,13 @@ The true $y_i$ is unknown for censored observations. Two approaches:
 | Data Characteristic | Value |
 |---------------------|-------|
 | Total observations | 75 |
-| Observed failures | 75 |
+| Observed failures | 73 |
+| Censored (synthetic, see note) | 2 |
 | Stress levels | 5 (S = 0.675, 0.750, 0.825, 0.900, 0.950 ksi) |
 | Specimens per stress level | 15 |
 | Response variable | $\ln N$ (log number of cycles to failure) |
+
+> **Note (2026-08-11):** The original P&M (1999) dataset has no true censoring indicator — all 75 observations are complete failures. Every code path in this repo (`rfl_pymc_da.py` and all others) synthesizes 2 censored observations as a live test case for the [censored-data extension](#34-extension-to-censored-data): within each stress-level group, if the maximum value is tied (appears more than once), all copies of that tied maximum are flagged `event=0` (censored) instead of `event=1` (failure). Only the S=0.675 group has a tie (two specimens both at 11748.1 cycles), giving exactly 73 failures + 2 censored. This heuristic is fragile — any genuine failure value that happens to tie for the group maximum would also be mislabeled — but for this specific dataset it only affects those 2 points.
 
 ---
 
@@ -387,33 +390,35 @@ $$\text{LOO-ELPD} = \sum_{i=1}^{75} \log p(y_i \mid \mathbf{y}_{-i})$$
 
 | $S_j$ | $E(\ln Y \mid S_j)$ | SD (SEV) | SD (Normal) |
 |-------|:-------------------:|:--------:|:-----------:|
-| 0.675 | 6.82 | **1.158** | 1.139 |
-| 0.750 | 3.38 | 0.808 | 0.782 |
-| 0.825 | 0.91 | 0.599 | 0.612 |
-| 0.900 | −0.99 | 0.470 | 0.515 |
-| 0.950 | −2.10 | 0.525 | 0.418 |
+| 0.675 | 6.82 | **1.158** | 1.127 |
+| 0.750 | 3.38 | 0.808 | 0.794 |
+| 0.825 | 0.91 | 0.599 | 0.586 |
+| 0.900 | −0.99 | 0.470 | 0.471 |
+| 0.950 | −2.10 | 0.525 | 0.508 |
 
-The SD at low stress (S=0.675) is **2.5x** that at high stress (S=0.9), revealing a pronounced heteroscedastic structure.
+The SD at low stress (S=0.675) is **2.5x** that at high stress (S=0.9), revealing a pronounced heteroscedastic structure. (SD (Normal) column corrected 2026-08-11 — see note in §5.5; both SEV and Normal columns now consistently tick back up at S=0.950.)
 
 ### 5.5 Model Z-Score ASSE (y-ASSE, ln-lifetime space)
 
+> **Note (2026-08-11):** `rfl_model_zscore_asse.py` and `rfl_hl_asse.py` had a bug where the "Normal+LN" branch silently reused the SEV likelihood instead of a real Normal likelihood. Numbers below are from the corrected rerun. This script's own NUTS run also shows notably more divergences (SEV: 2214, Normal: 827) than the primary inference script in Section 5.1 (0 divergences) — posterior means match Section 5.2 closely for SEV, but these ASSE numbers should be treated as provisional pending resampling with a higher `target_accept`.
+
 | Method | SEV+LN plugin | Normal+LN plugin | SEV+LN post. mean | Normal+LN post. mean |
 |--------|:-------------:|:----------------:|:-----------------:|:--------------------:|
-| Sample z-score (Chiu-style) | 10.93 | 9.17 | 14.44 | 14.19 |
-| **Model z-score (this work)** | **4.32** | **3.53** | **5.29** | **4.65** |
-| Improvement (plugin) | **60.5%** | **61.5%** | — | — |
+| Sample z-score (Chiu-style) | 10.93 | 10.61 | 14.44 | 14.62 |
+| **Model z-score (this work)** | **4.32** | **4.53** | **5.29** | **5.70** |
+| Improvement (plugin) | **60.5%** | **57.3%** | — | — |
 
 ### 5.6 HL Heuristic Search Results (y-ASSE plugin)
 
 | Heuristic | SEV+LN | Normal+LN | Notes |
 |-----------|:------:|:---------:|-------|
-| **H0: model z-score + Phi(z)** | **4.32** | **3.53** | **Best** (implicit shrinkage) |
-| H1: exact marginal CDF | 10.38 | 12.57 | Counterintuitively worse |
-| H2: Cornish-Fisher skewness correction | 6.21 | 3.67 | Slightly worse |
-| H3: per-group z calibration | 10.93 | 14.05 | Worst |
-| H4: DA posterior E[Delta_i|data] | 5.80 | 9.55 | Moderate |
+| **H0: model z-score + Phi(z)** | **4.32** | **4.53** | **Best overall** (SEV+LN lowest) |
+| H1: exact marginal CDF | 10.38 | 8.55 | Counterintuitively worse |
+| H2: Cornish-Fisher skewness correction | 6.21 | 4.53 | Ties H0 for Normal (zero skewness → no-op) |
+| H3: per-group z calibration | 10.93 | 10.61 | Worst |
+| H4: DA posterior E[Delta_i|data] | 5.80 | 7.75 | Moderate |
 
-**Key finding:** H1 (exact marginal CDF) performs worse than H0 (Normal approximation $\Phi(z)$). The implicit shrinkage of $\Phi(z)$ for extreme z-values (Normal tails are more conservative than the true marginal) acts as useful regularization with the finite sample n=75. This is a classic **bias-variance tradeoff**: a "more correct" method need not perform better in finite samples.
+**Key finding:** H1 (exact marginal CDF) performs worse than H0 (Normal approximation $\Phi(z)$) for **both** SEV+LN and Normal+LN. The implicit shrinkage of $\Phi(z)$ for extreme z-values acts as useful regularization with the finite sample n=75. This is a classic **bias-variance tradeoff**: a "more correct" method need not perform better in finite samples. Note this reverses an earlier (bug-contaminated) reading where Normal+LN appeared to beat SEV+LN overall (3.53 vs 4.32) — with the Normal likelihood bug fixed, **SEV+LN H0 (4.32) is now the best combination**, with Normal+LN H0 (4.53) a close second.
 
 ---
 
@@ -453,17 +458,18 @@ The SD at low stress (S=0.675) is **2.5x** that at high stress (S=0.9), revealin
 | SEV+INLA (MLE in-sample) | 5.76 | SEV | `rfl_profile.py` |
 | **Bayes DA Plugin (SEV+Euler)** | **5.75** | SEV | `rfl_bayes_asse.py` |
 | SEV sample z-score | 10.93 | SEV | `rfl_model_zscore_asse.py` |
-| Normal sample z-score | 9.17 | Normal | `rfl_model_zscore_asse.py` |
+| Normal sample z-score | 10.61 | Normal | `rfl_model_zscore_asse.py` |
 | **Model z-score (SEV, H0)** | **4.32** | SEV | `rfl_model_zscore_asse.py` |
-| **Model z-score (Normal, H0)** | **3.53** | Normal | `rfl_model_zscore_asse.py` |
+| **Model z-score (Normal, H0)** | **4.53** | Normal | `rfl_model_zscore_asse.py` |
 
 #### Rank Space (P&M 1999 criterion, E)
 
 | Method | E | Notes |
 |--------|---|-------|
 | Normal-Normal MLE (concrete data) | 12.84 | P&M (1999) best result |
-| Roy Method B (rank-ASSE, direct optimization) | 12.24 | `rfl_chiu.py` |
-| Roy Method C-2 (rank-ASSE) | 12.24 (z), 12.xx (rank) | `rfl_chiu.py` |
+| **Roy Method B (rank-ASSE, direct optimization)** | **12.24** | `rfl_chiu.py`, best in this space |
+
+> **Note (2026-08-11):** The previous row here ("Roy Method C-2 (rank-ASSE) | 12.24 (z), 12.xx (rank)") was erroneous — `rfl_chiu.py`'s `run_z_asse_opt()` (Method C-2) only optimizes the z-ASSE objective and never computes a rank-ASSE score; the "12.24" was actually Method B's rank-ASSE value, misattributed, and "12.xx" was an unfilled placeholder. C-2's real result is a **z-ASSE of 9.94** (Section 6.2's z-score space table above), not a rank-ASSE — removed from this table since it doesn't belong in the rank-ASSE space.
 
 ### 6.3 Method Comparison Summary
 

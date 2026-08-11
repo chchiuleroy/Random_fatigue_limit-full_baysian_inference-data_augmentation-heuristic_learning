@@ -207,11 +207,14 @@ def _start_theta(g_type, rng):
 # ═══════════════════════════════════════════════════════════════════════
 
 def rhat(chains):
-    """Gelman-Rubin R̂ for each parameter. chains: (n_chains, n_draws, n_dim)"""
+    """Gelman-Rubin R̂ for each parameter. chains: (n_chains, n_draws, n_dim).
+    Prefer arviz.rhat() for reported numbers (rank-normalized, matches
+    Section 5.1). B previously divided by M instead of M-1 (underestimating
+    between-chain variance); fixed 2026-08-11."""
     M, N, _ = chains.shape
     chain_mean = chains.mean(axis=1)          # (M, n_dim)
     grand_mean = chain_mean.mean(axis=0)      # (n_dim,)
-    B = N * ((chain_mean - grand_mean)**2).mean(axis=0)
+    B = N / (M - 1) * ((chain_mean - grand_mean)**2).sum(axis=0)
     W = chains.var(axis=1, ddof=1).mean(axis=0)
     var_est = (N-1)/N * W + B/N
     return np.sqrt(var_est / np.maximum(W, 1e-15))
