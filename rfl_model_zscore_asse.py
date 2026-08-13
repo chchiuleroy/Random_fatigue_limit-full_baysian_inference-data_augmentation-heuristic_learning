@@ -222,7 +222,7 @@ def run_one(error, init_sig):
                           log_sigma=np.log(init_sig),
                           mu_d=-0.65, log_sigma_d=np.log(0.04),
                           z_delta=np.zeros(N_OBS)),
-            target_accept=0.85,
+            target_accept=0.95,  # raised from 0.85 (2026-08-12), see README §5.5
             progressbar=True,
             random_seed=[0,1,2,3],
         )

@@ -293,11 +293,13 @@ The true $y_i$ is unknown for censored observations. Two approaches:
 
 ### 5.1 MCMC Convergence (SEV + LogNormal, Best Model)
 
+> **⚠️ 2026-08-12 — "Divergences = 0" does not currently reproduce; see §5.5 note for the full diagnostic (independently reviewed by 小o).** Re-running `rfl_pymc_da.py`'s exact SEV+LogNormal model (same code, same `initvals`, same `random_seed=[0,1,2,3]`) in the current environment gives **2214 divergences**, not 0 — confirmed **not** a script-specific error: all three RFL PyMC scripts (this one, `rfl_model_zscore_asse.py`, `rfl_hl_asse.py`) give the identical divergence count when run side-by-side today. Why the original "0" no longer reproduces is unconfirmed (a missing `g++`/different PyTensor compilation path is one plausible factor, not a verified cause — see §5.5).
+
 | Metric | Value |
 |--------|-------|
 | Max $\hat{R}$ | 1.032 |
 | Min ESS | 117 |
-| Divergences | 0 |
+| Divergences | 0 (⚠️ not reproducible with current environment — see callout above) |
 | LOO-ELPD | −76.39 (better than Normal+LN = −79.38) |
 
 #### Metric Interpretation
@@ -340,7 +342,7 @@ During HMC/NUTS numerical integration, if energy conservation is severely violat
 - Divergences = 0: HMC operating normally; flat posterior geometry
 - Divergences > 0: reduce step size (increase `target_accept`) or switch to NCP
 
-**This study: Divergences = 0** — NCP successfully flattened Neal's Funnel; all 4 chains have zero divergences.
+**This study: Divergences = 0 as originally reported, but not reproducible as of 2026-08-12** — see the callout at the top of §5.1 and the full diagnostic in §5.5 (independently reviewed by 小o, `codex exec`, delegation-marked). Confirmed: not a current script-to-script difference (`rfl_pymc_da.py` itself now gives the same 2214 divergences as the other two RFL scripts under identical settings). What's *not* confirmed: an initial mean-based comparison suggested divergent draws correlate with larger $\sigma_\Delta$ rather than proximity to the hard $S_j - \Delta_i$ boundary — 小o's review flagged real gaps in that comparison (autocorrelated draws treated as independent samples, mean instead of tail quantiles, a stored divergent draw being the trajectory endpoint rather than necessarily where integration failed), so this NCP/CP-regime story is a **hypothesis, not a finding**. A sharper, independently-flagged lead: the code's docstring claims a truncated LogNormal for $\Delta_i$, but the implementation is an *untruncated* LogNormal plus a `pt.maximum(...)` soft penalty in the likelihood — a real model/implementation mismatch that's a more likely direct source of difficult geometry, and the better starting point for future work. Raising `target_accept` from 0.85 (2214 divergences) through 0.90/0.95/0.99 (1638/932/388) reduces but does not eliminate them, and 0.99 introduces `max_treedepth` warnings on all 4 chains (step-size sensitivity, not proof of a step-size-independent problem). Reparameterization (targeting the truncation mismatch above) is real modeling work, not implemented here; Roy's 2026-08-12 decision was to document this and move on rather than implement it in this pass.
 
 ---
 
@@ -400,7 +402,17 @@ The SD at low stress (S=0.675) is **2.5x** that at high stress (S=0.9), revealin
 
 ### 5.5 Model Z-Score ASSE (y-ASSE, ln-lifetime space)
 
-> **Note (2026-08-11):** `rfl_model_zscore_asse.py` and `rfl_hl_asse.py` had a bug where the "Normal+LN" branch silently reused the SEV likelihood instead of a real Normal likelihood. Numbers below are from the corrected rerun. This script's own NUTS run also shows notably more divergences (SEV: 2214, Normal: 827) than the primary inference script in Section 5.1 (0 divergences) — posterior means match Section 5.2 closely for SEV, but these ASSE numbers should be treated as provisional pending resampling with a higher `target_accept`.
+> **Note (2026-08-11):** `rfl_model_zscore_asse.py` and `rfl_hl_asse.py` had a bug where the "Normal+LN" branch silently reused the SEV likelihood instead of a real Normal likelihood. Numbers below are from the corrected rerun.
+>
+> **2026-08-12 divergence investigation (todo.md follow-up).** The original premise — that these two scripts diverge more than the "primary" `rfl_pymc_da.py` (2214/827 vs. 0) because of a model-building difference between the scripts — does **not** hold up: side-by-side testing in the same process, same environment, same `random_seed`, found `rfl_pymc_da.py`'s own SEV+LogNormal model *also* gives exactly 2214 divergences today. Line-by-line comparison of all three scripts' `build_model()`/`build_da_model()` found them structurally identical for the SEV+LogNormal case — **this specific conclusion (not a current script-to-script difference) is solid**; independent review (小o, `codex exec`, delegation-marked) confirmed it.
+>
+> **What's *not* solid — and was corrected after review:** the diagnosis of *why* went further than the evidence supports. A mean-based comparison of divergent vs. non-divergent draws found divergent draws slightly *farther* from the hard $S_j - \Delta_i$ boundary (0.127 vs. 0.106) and correlated with larger $\sigma_\Delta$ (0.045 vs. 0.039). 小o's review flagged real methodological gaps in that comparison — draws are autocorrelated (not valid to treat as independent samples for a mean comparison), a stored "divergent" draw is the trajectory's *endpoint*, not necessarily where the integration actually failed, and a mean obscures the tail (should compare low quantiles / the fraction near-zero / worst margin per stress level, or bin by $\sigma_\Delta$ and plot the divergence *rate* per bin). **The NCP/CP-intermediate-regime explanation is downgraded from a conclusion to a hypothesis.**
+>
+> 小o also flagged a sharper, more likely lead that the original diagnosis missed: the code's own docstring describes $\Delta_i$ as truncated LogNormal ("截斷在 (0, Sᵢ)"), but the actual implementation is an **untruncated** LogNormal (`delta = exp(mu_d + sigma_d*z_delta)`) combined with a `pt.maximum(S_OBS - delta, 1e-8)` *soft penalty* applied only through the likelihood — not a true truncated-support density. This creates a kink at $\Delta_i = S_j$ and omits the normalizing-constant effect a real truncation would have on $\mu_\Delta$/$\sigma_\Delta$'s posterior. This model/implementation mismatch is flagged as **more likely to be the direct source of difficult geometry** than the NCP-regime story, and is the better-targeted lead for anyone picking this up later.
+>
+> The "environment changed (`g++` unavailable)" explanation for why `rfl_pymc_da.py` no longer reproduces its own "0 divergences" claim is **plausible but unconfirmed** — it only shows a compilation path is currently missing, not that this caused the historical change. Checking the original run's package versions (PyMC/PyTensor/NumPy/BLAS/Python) and PyTensor's compile mode would be needed to actually confirm this.
+>
+> **What was tried:** raising `target_accept` from 0.85 (2214 divergences) to 0.90/0.95/0.99 gives 1638/932/388 — a real reduction, not a fix, and at 0.99 all 4 chains hit `max_treedepth` (this shows step-size sensitivity, not proof the geometry problem is step-size-independent — a subtly different claim than originally stated here). The standard fix for a persistent-but-shrinking divergence pattern — reparameterization (targeting the truncation/soft-constraint mismatch above, or a partial/hybrid NCP) — is genuine additional modeling work; Roy's 2026-08-12 decision was to document this rather than implement it in this pass. **`target_accept` default raised from 0.85 to 0.95** across all three scripts (all model branches, not just the diagnosed SEV+LogNormal one — a deliberate defensive default, not a per-branch evidence-based tuning) as a practical mitigation (932 divergences at $n=8000$ post-tuning draws, down from 2214) — **this reduces, it does not validate**: R-hat/ESS looking clean at 0.95 does not by itself guarantee an unbiased posterior while divergences remain. ASSE numbers below remain **provisional**.
 
 | Method | SEV+LN plugin | Normal+LN plugin | SEV+LN post. mean | Normal+LN post. mean |
 |--------|:-------------:|:----------------:|:-----------------:|:--------------------:|

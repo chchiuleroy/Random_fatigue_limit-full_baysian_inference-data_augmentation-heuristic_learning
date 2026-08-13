@@ -307,6 +307,14 @@ def _run_pt_replica(seed, n_warmup, n_draws, nu, temps, swap_interval, verbose):
     h_dls      = np.full(K, 2.38)
     acc_dl_recent = np.zeros((K, N_OBS), dtype=int)
 
+    # Self-Regulating alpha: frozen snapshots for the draws phase, one per
+    # chain (2026-08-12 fix -- see rfl_self_adaptive_mcmc.py's module-level
+    # comment on why a per-iteration Hastings correction was abandoned in
+    # favor of freezing). Populated at it == n_warmup.
+    C_reg_frozen     = [None] * K
+    alpha_reg_frozen = np.ones(K)
+    step_dl_frozen_arr = None   # (K, N_OBS), set once warmup ends
+
     t0 = time.time()
 
     for it in range(n_total):
@@ -320,14 +328,23 @@ def _run_pt_replica(seed, n_warmup, n_draws, nu, temps, swap_interval, verbose):
             beta_k = inv_temps[k]  # 1/T_k
 
             # --- Block A: Self-Reg AM at temperature T_k ----------------
-            wc_regs[k].update(regs[k])
-            C_use = wc_regs[k].cov
-            try:
-                C_inv = np.linalg.inv(C_use + 1e-8 * np.eye(D_R))
-                alpha_r = 1.0 if warmup else self_reg_alpha(
-                    regs[k], wc_regs[k].mean, C_inv, nu, D_R)
-            except np.linalg.LinAlgError:
+            # Frozen at the draws-phase boundary (2026-08-12 fix): see the
+            # note above C_reg_frozen's initialization.
+            if warmup:
+                wc_regs[k].update(regs[k])
+                C_use = wc_regs[k].cov
                 alpha_r = 1.0
+            else:
+                if it == n_warmup:
+                    C_reg_frozen[k] = wc_regs[k].cov.copy()
+                    try:
+                        C_inv0 = np.linalg.inv(C_reg_frozen[k] + 1e-8 * np.eye(D_R))
+                        alpha_reg_frozen[k] = self_reg_alpha(
+                            regs[k], wc_regs[k].mean, C_inv0, nu, D_R)
+                    except np.linalg.LinAlgError:
+                        alpha_reg_frozen[k] = 1.0
+                C_use = C_reg_frozen[k]
+                alpha_r = alpha_reg_frozen[k]
 
             C_prop = (2.38**2 / D_R) * alpha_r**2 * C_use
             try:
@@ -354,24 +371,26 @@ def _run_pt_replica(seed, n_warmup, n_draws, nu, temps, swap_interval, verbose):
 
         # ==============================================================
         # BLOCK D: vectorized across K chains (K × N_OBS)
+        # Self-Regulating step_all frozen at the draws-phase boundary
+        # (2026-08-12 fix, same rationale as Block A above): it depends on
+        # log_deltas, which keeps moving every iteration even during draws.
         # ==============================================================
-        for k in range(K):
-            wvv_dls[k].update(log_deltas[k])
-
-        # Build batch arrays
         b0s = regs[:, 0]
         b1s = regs[:, 1]
         lss = regs[:, 2]
 
-        # Compute proposals for all K chains simultaneously
-        stds_all = np.stack([wvv_dls[k].std for k in range(K)])       # (K, N_OBS)
-        means_all = np.stack([wvv_dls[k].mean for k in range(K)])     # (K, N_OBS)
-        vars_inv_all = np.stack([1.0 / wvv_dls[k].var for k in range(K)])  # (K, N_OBS)
+        if warmup:
+            for k in range(K):
+                wvv_dls[k].update(log_deltas[k])
+            stds_all = np.stack([wvv_dls[k].std for k in range(K)])       # (K, N_OBS)
+            means_all = np.stack([wvv_dls[k].mean for k in range(K)])     # (K, N_OBS)
+            vars_inv_all = np.stack([1.0 / wvv_dls[k].var for k in range(K)])  # (K, N_OBS)
 
-        d2_all    = (log_deltas - means_all)**2 * vars_inv_all        # (K, N_OBS)
-        alpha_all = np.clip(np.sqrt((nu + d2_all) / (nu + 1.0)), 0.1, 4.0)
-        step_all  = np.maximum(h_dls[:, None] * stds_all * alpha_all, 0.04)
+            d2_all    = (log_deltas - means_all)**2 * vars_inv_all        # (K, N_OBS)
+            alpha_all = np.clip(np.sqrt((nu + d2_all) / (nu + 1.0)), 0.1, 4.0)
+            step_dl_frozen_arr = np.maximum(h_dls[:, None] * stds_all * alpha_all, 0.04)
 
+        step_all = step_dl_frozen_arr
         ld_prop_all = log_deltas + rng.normal(0.0, step_all)          # (K, N_OBS)
         valid_all   = ld_prop_all < LOG_S[None, :]                    # (K, N_OBS)
 

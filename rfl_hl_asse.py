@@ -269,7 +269,7 @@ if __name__ == "__main__":
             initvals=dict(beta0=-9.4,beta1=-8.5,log_sigma=np.log(0.19),
                           mu_d=-0.65,log_sigma_d=np.log(0.04),
                           z_delta=np.zeros(N_OBS)),
-            target_accept=0.85, progressbar=True, random_seed=[0,1,2,3])
+            target_accept=0.95, progressbar=True, random_seed=[0,1,2,3])  # raised from 0.85 (2026-08-12), see README §5.5
 
     pm_sev = {v: float(idata_sev.posterior[v].mean())
               for v in ["beta0","beta1","sigma","mu_d","sigma_d"]}
@@ -286,7 +286,7 @@ if __name__ == "__main__":
             initvals=dict(beta0=-9.2,beta1=-8.1,log_sigma=np.log(0.60),
                           mu_d=-0.65,log_sigma_d=np.log(0.04),
                           z_delta=np.zeros(N_OBS)),
-            target_accept=0.85, progressbar=True, random_seed=[0,1,2,3])
+            target_accept=0.95, progressbar=True, random_seed=[0,1,2,3])  # raised from 0.85 (2026-08-12), see README §5.5
 
     pm_nor = {v: float(idata_nor.posterior[v].mean())
               for v in ["beta0","beta1","sigma","mu_d","sigma_d"]}

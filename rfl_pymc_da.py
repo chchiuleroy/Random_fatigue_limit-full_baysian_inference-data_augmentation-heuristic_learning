@@ -184,7 +184,11 @@ N_CHAINS      = 4
 N_TUNE        = 2000
 N_DRAWS       = 2000
 N_CORES       = 4   # Data augmentation = pure pytensor → picklable → 真正平行
-TARGET_ACCEPT = 0.85
+TARGET_ACCEPT = 0.95   # raised from 0.85 (2026-08-12): SEV+LogNormal shows
+                        # persistent NUTS divergences (NCP/CP intermediate-
+                        # regime issue, not a boundary-cliff or script bug --
+                        # see README.md Section 5.5). 0.95 cuts divergences
+                        # from 2214 to 932 (still nonzero; provisional).
 
 if __name__ == "__main__":
     print(f"n={N_OBS}  failures={len(fail_idx)}  censored={len(cens_idx)}")

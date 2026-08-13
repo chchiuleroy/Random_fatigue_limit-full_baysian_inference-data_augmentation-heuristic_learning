@@ -398,6 +398,14 @@ def _run_chain(seed, n_warmup, n_draws, nu, verbose):
     dl_out = np.zeros((n_draws, N_OBS))
 
     alpha_reg_log = []
+    # Self-Reg alpha freeze: average over a window near the end of warmup
+    # rather than a single snapshot (2026-08-12, Roy's request after the
+    # single-snapshot freeze showed poor cross-chain Rhat -- a lone
+    # end-of-warmup point can land unluckily far from a "typical" alpha
+    # given this model's known ridge/funnel geometry).
+    _ALPHA_AVG_WINDOW = max(1, min(300, n_warmup // 4))
+    alpha_r_recent = []
+    step_dl_recent  = []   # Block D's windowed-average freeze, same rationale
     t0 = time.time()
 
     for it in range(n_total):
@@ -424,19 +432,36 @@ def _run_chain(seed, n_warmup, n_draws, nu, verbose):
                 if _eig.min() > 0 and np.all(np.sqrt(np.diag(_C_new)) < 0.5):
                     C_dyn = _C_new
 
-        wc_reg.update(reg)
-
-        C_use = C_dyn if warmup else wc_reg.cov
-        try:
-            C_inv = np.linalg.inv(C_use + 1e-8 * np.eye(D_R))
-            # Self-reg alpha only during sampling: warmup uses pure AM (alpha=1)
-            # so the biased running mean doesn't inflate proposals.
-            if warmup:
-                alpha_r = 1.0
-            else:
-                alpha_r = self_reg_alpha(reg, wc_reg.mean, C_inv, nu, D_R)
-        except np.linalg.LinAlgError:
+        # Self-Regulating alpha (2026-08-12 fix -- see module docstring
+        # "Self-Regulating detailed-balance fix"): letting alpha (and its
+        # base covariance wc_reg.cov) keep varying with the chain's history
+        # DURING the draws actually used for inference makes the proposal
+        # state-dependent, which needs a Hastings correction a first attempt
+        # at deriving got wrong badly enough to blow sigma_Delta up to
+        # ~1e45 in testing -- not safe to hand-derive per script. Instead:
+        # let both keep adapting through warmup exactly as designed (pure
+        # AM, alpha=1, so the still-biased early mean can't inflate
+        # proposals), then snapshot and FREEZE both the instant the
+        # draws-phase begins. A frozen, history-independent kernel needs no
+        # Hastings correction -- it's an ordinary fixed-covariance AM step.
+        if warmup:
+            wc_reg.update(reg)
+            C_use = C_dyn
             alpha_r = 1.0
+            if it >= n_warmup - _ALPHA_AVG_WINDOW:
+                try:
+                    C_inv_probe = np.linalg.inv(wc_reg.cov + 1e-8 * np.eye(D_R))
+                    alpha_r_recent.append(
+                        self_reg_alpha(reg, wc_reg.mean, C_inv_probe, nu, D_R))
+                except np.linalg.LinAlgError:
+                    pass
+        else:
+            if it == n_warmup:
+                C_use_frozen = wc_reg.cov.copy()
+                alpha_frozen = float(np.mean(alpha_r_recent)) if alpha_r_recent else 1.0
+            C_use = C_use_frozen
+            alpha_r = alpha_frozen
+
         C_prop = (2.38**2 / D_R) * alpha_r**2 * C_use
         try:
             L_r = np.linalg.cholesky(C_prop + 1e-8 * np.eye(D_R))
@@ -478,13 +503,25 @@ def _run_chain(seed, n_warmup, n_draws, nu, verbose):
         # Gibbs collapses to a tight conditional mode when Delta_i and
         # (b0,b1,ls) are updated only once each per sweep.
         # ==============================================================
-        wvv_dl.update(log_delta)        # Welford updated once per main iteration
-        var_inv_i = 1.0 / wvv_dl.var
+        # Self-Regulating alpha (2026-08-12 fix, same rationale as Block A
+        # above): alpha_i (and hence step_i) depend on the CURRENT log_delta,
+        # which keeps moving every sweep even during the draws phase --
+        # freeze both to their end-of-warmup values instead of re-deriving a
+        # per-sweep Hastings correction (see Block A's comment for why that
+        # path was abandoned).
+        if warmup:
+            wvv_dl.update(log_delta)        # Welford updated once per main iteration
+            var_inv_i = 1.0 / wvv_dl.var
+            d2_i = (log_delta - wvv_dl.mean)**2 * var_inv_i
+            alpha_i_snap = np.clip(np.sqrt((nu + d2_i) / (nu + 1.0)), 0.1, 4.0)
+            step_i_frozen = np.maximum(h_dl * wvv_dl.std * alpha_i_snap, min_step)
+            if it >= n_warmup - _ALPHA_AVG_WINDOW:
+                step_dl_recent.append(step_i_frozen.copy())
+        elif it == n_warmup and step_dl_recent:
+            step_i_frozen = np.mean(step_dl_recent, axis=0)
 
         for _sw in range(N_DL_SWEEPS):
-            d2_i    = (log_delta - wvv_dl.mean)**2 * var_inv_i
-            alpha_i = np.clip(np.sqrt((nu + d2_i) / (nu + 1.0)), 0.1, 4.0)
-            step_i  = np.maximum(h_dl * wvv_dl.std * alpha_i, min_step)
+            step_i  = step_i_frozen
             ld_prop = log_delta + rng.normal(0.0, step_i)
             valid   = ld_prop < LOG_S
 
