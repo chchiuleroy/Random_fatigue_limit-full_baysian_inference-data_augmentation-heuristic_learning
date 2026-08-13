@@ -21,6 +21,36 @@ The tempered target at temperature T_k:
 
 High-T chains flatten the posterior => easy barrier crossing.
 Swap criterion ensures detailed balance across temperature ladder.
+
+2026-08-13 tempered-target consistency fix: prior to this fix, Block A
+tempered (prior + likelihood) together, Block B/C's exact conjugate Gibbs
+was untempered, Block D tempered only the likelihood (leaving the latent
+Normal prior on log_delta untempered), and the swap step used the FULL
+untempered log-posterior -- three inconsistent notions of what "tempered"
+means for the same augmented state (regs, log_delta, mu_d, sd_d), so the
+within-chain kernels were not jointly sampling from any single pi_{T_k},
+and the swap's detailed-balance argument (which assumes they were)
+didn't hold. Fixed by adopting one target definition consistently:
+  pi_{T_k}(regs, log_delta, mu_d, sd_d) propto
+      L(data | regs, log_delta)^{1/T_k}
+      * prior_reg(regs) * p(log_delta | mu_d, sd_d) * prior(mu_d, sd_d)
+i.e. ONLY the likelihood is tempered; every prior (including the latent
+Normal prior linking log_delta to mu_d/sd_d) stays untempered at every
+T_k. Under this definition Block B/C's untempered exact Gibbs is already
+exactly correct (the likelihood doesn't depend on mu_d/sd_d directly, so
+the conditional posterior for them is temperature-invariant) and Block D's
+existing "temper likelihood only" acceptance was already correct too --
+only Block A (now splits prior/likelihood and tempers just the likelihood
+term) and the swap step needed to change. For the swap: writing the
+untempered joint of every non-likelihood term as g(x), pi_{T_k}(x) =
+L(x)^{1/T_k} * g(x), and the standard swap ratio
+  min(1, [pi_i(x_j) pi_j(x_i)] / [pi_i(x_i) pi_j(x_j)])
+has g(x_i)*g(x_j) appear identically in numerator and denominator -- it
+cancels EXACTLY regardless of what g is, leaving only
+  [L(x_j)/L(x_i)]^{1/T_i - 1/T_j}
+so the swap now compares log_lik_sev_all() alone, not the full posterior.
+See [[concept_parallel_tempering]] SS4.H for the diagnostic history and
+小o's original recommendation this fix follows.
 """
 
 import numpy as np
@@ -304,6 +334,12 @@ def _run_pt_replica(seed, n_warmup, n_draws, nu, temps, swap_interval, verbose):
     acc_dl     = np.zeros((K, N_OBS), dtype=int)
     n_swaps_attempted = 0
     n_swaps_accepted  = 0
+    # Per-pair swap counts (pair i = rungs i,i+1), draws phase only --
+    # localizes WHERE along the ladder communication is weak, same
+    # rationale as hawkes_pt.py's 2026-08-13 diagnostic (an aggregate rate
+    # can hide one dead pair).
+    pair_attempted_draws = np.zeros(K - 1, dtype=int)
+    pair_accepted_draws  = np.zeros(K - 1, dtype=int)
     h_dls      = np.full(K, 2.38)
     acc_dl_recent = np.zeros((K, N_OBS), dtype=int)
 
@@ -353,12 +389,22 @@ def _run_pt_replica(seed, n_warmup, n_draws, nu, temps, swap_interval, verbose):
                 L_r = np.diag(np.sqrt(np.diag(C_use)) * alpha_r * np.sqrt(2.38**2 / D_R))
 
             reg_p = regs[k] + L_r @ rng.standard_normal(D_R)
-            lp_curr = log_prior_reg(*regs[k]) + log_lik_sev_all(*regs[k], log_deltas[k])
-            lp_prop = log_prior_reg(*reg_p)   + log_lik_sev_all(*reg_p,   log_deltas[k])
+            # 2026-08-13 fix: temper ONLY the likelihood, not the prior --
+            # matches the "only temper likelihood" target used by Block D
+            # below and required for the swap step's prior-cancellation
+            # argument to hold (see swap comment). Previously both terms
+            # were summed THEN multiplied by beta_k together; numerically
+            # identical for this flat 0/-inf prior (temper doesn't change
+            # which side of 0/-inf a term is on) but wrong in form, and
+            # would silently break the moment log_prior_reg becomes
+            # non-flat. See [[concept_parallel_tempering]] SS4.H.
+            prior_curr = log_prior_reg(*regs[k])
+            prior_prop = log_prior_reg(*reg_p)
+            ll_curr = log_lik_sev_all(*regs[k], log_deltas[k])
+            ll_prop = log_lik_sev_all(*reg_p,   log_deltas[k])
 
-            # Tempered acceptance: use beta_k * log-lik
-            if np.isfinite(lp_prop):
-                log_alpha = beta_k * (lp_prop - lp_curr)
+            if np.isfinite(prior_prop) and np.isfinite(ll_prop):
+                log_alpha = (prior_prop - prior_curr) + beta_k * (ll_prop - ll_curr)
                 if np.log(rng.uniform()) < log_alpha:
                     regs[k] = reg_p
                     acc_reg[k] += 1
@@ -438,15 +484,36 @@ def _run_pt_replica(seed, n_warmup, n_draws, nu, temps, swap_interval, verbose):
                 j = i + 1
                 n_swaps_attempted += 1
 
-                # Full log-posterior (untempered) for both states
-                lp_i = (log_prior_reg(*regs[i]) + log_lik_sev_all(*regs[i], log_deltas[i])
-                         + np.sum(stats.norm.logpdf(log_deltas[i], mu_ds[i], sd_ds[i])))
-                lp_j = (log_prior_reg(*regs[j]) + log_lik_sev_all(*regs[j], log_deltas[j])
-                         + np.sum(stats.norm.logpdf(log_deltas[j], mu_ds[j], sd_ds[j])))
+                # 2026-08-13 fix: swap ratio uses ONLY the likelihood
+                # difference, not the full log-posterior. Under the "temper
+                # only the likelihood" target now used consistently by
+                # Blocks A/D (pi_k(x) = L(data|x)^(1/T_k) * g(x), where g =
+                # regression prior * latent Normal prior * mu_d/sd_d prior
+                # is the SAME untempered function of state x at every T_k --
+                # Block B/C's untempered exact Gibbs makes this hold for
+                # free), the standard swap acceptance
+                #   min(1, [pi_i(x_j) pi_j(x_i)] / [pi_i(x_i) pi_j(x_j)])
+                # has g(x_i)*g(x_j) appear identically in numerator and
+                # denominator -- it cancels EXACTLY (not approximately),
+                # leaving only [L(x_j)/L(x_i)]^(1/Ti - 1/Tj). Including g in
+                # the ratio (the previous "full untempered posterior" code)
+                # was therefore not just untempered-when-it-should-be but
+                # actively wrong: g doesn't cancel unless it's ABSENT from
+                # both sides, and the previous code left the regression
+                # prior in numerically (usually inert, it's flat) but also
+                # included the latent Normal prior sum, which is NOT flat
+                # and does not cancel when included in a min(1, ratio) that
+                # only accounts for the temperature difference on the
+                # combined term. See [[concept_parallel_tempering]] SS4.H.
+                ll_i = log_lik_sev_all(*regs[i], log_deltas[i])
+                ll_j = log_lik_sev_all(*regs[j], log_deltas[j])
 
-                if np.isfinite(lp_i) and np.isfinite(lp_j):
-                    # Swap criterion: min(1, exp((beta_i - beta_j)(lp_j - lp_i)))
-                    log_swap = (inv_temps[i] - inv_temps[j]) * (lp_j - lp_i)
+                if not warmup:
+                    pair_attempted_draws[i] += 1
+
+                if np.isfinite(ll_i) and np.isfinite(ll_j):
+                    # Swap criterion: min(1, exp((beta_i - beta_j)(ll_j - ll_i)))
+                    log_swap = (inv_temps[i] - inv_temps[j]) * (ll_j - ll_i)
                     if np.log(rng.uniform()) < log_swap:
                         # Swap ALL state between chains i and j
                         regs[i], regs[j] = regs[j].copy(), regs[i].copy()
@@ -466,6 +533,8 @@ def _run_pt_replica(seed, n_warmup, n_draws, nu, temps, swap_interval, verbose):
                                 wvv_dls[_k].count = _TRUST_N
                             wvv_dls[_k].mean = log_deltas[_k].copy()
                         n_swaps_accepted += 1
+                        if not warmup:
+                            pair_accepted_draws[i] += 1
 
         # -- Store cold chain draws -----------------------------------------
         if not warmup:
@@ -485,7 +554,8 @@ def _run_pt_replica(seed, n_warmup, n_draws, nu, temps, swap_interval, verbose):
 
     elapsed = time.time() - t0
     swap_rate = n_swaps_accepted / max(n_swaps_attempted, 1)
-    return th_out, acc_reg, acc_dl, swap_rate, elapsed
+    pair_swap_rates_draws = pair_accepted_draws / np.maximum(pair_attempted_draws, 1)
+    return th_out, acc_reg, acc_dl, swap_rate, elapsed, pair_swap_rates_draws
 
 
 # ======================================================================
@@ -496,8 +566,29 @@ if __name__ == "__main__":
     N_WARMUP      = 4000
     N_DRAWS       = 6000
     NU            = 5.0
-    TEMPS         = [1.0, 1.5, 2.25, 3.4, 5.0, 8.0]  # ratio ~1.5, denser ladder
     SWAP_INTERVAL = 30
+
+    # Graded ladder (2026-08-13): the old constant-ratio-1.5 ladder above
+    # went dead at the cold end once the swap step was fixed to compare
+    # ONLY the likelihood (see module docstring) -- per-pair diagnostics
+    # measured 0.3% acceptance at T=1.0<->1.5 with the 6-rung ladder, and
+    # re-running at that ladder's official scale actually made arviz
+    # Rhat_max WORSE than the pre-fix (buggy-tempering) baseline: 1.65 ->
+    # 1.83. Isolated 2-rung calibration found the SEV likelihood surface
+    # near T=1 is sharp enough at N_OBS=75 that only ratios below ~1.05
+    # give non-trivial (and noisy, this posterior has its own known
+    # (b0,b1)<->Delta_i identifiability ridge) acceptance. Fix: dense ratio
+    # near T=1 (1.04 for 24 rungs, reaching T~2.56) then widening (1.45 for
+    # 3 more rungs, matching the original ladder's spacing beyond ~T=2.25
+    # where it was already healthy) -- 28 rungs total. Re-verified at this
+    # exact warmup/draws budget: arviz Rhat_max 1.83 -> **1.54** (below
+    # even the original pre-fix 1.65), ESS_bulk_min 5 -> 7 (best-tuned
+    # 8/16-rung intermediate attempts also tried; not all logged here).
+    # STILL above this project's 1.1 threshold -- do not cite as converged.
+    # See [[concept_parallel_tempering]] SS4.B/H for the full trail.
+    TEMPS = [1.0]
+    for _r in [1.04] * 24 + [1.45] * 3:
+        TEMPS.append(TEMPS[-1] * _r)
 
     PNAMES = ["b0", "b1", "log_sigma", "mu_d", "log_sigma_d"]
     MLE = np.array([-9.370, -8.534, np.log(0.190), -0.644, np.log(0.036)])
@@ -522,15 +613,24 @@ if __name__ == "__main__":
             for r in range(N_REPLICAS)
         }
         results = [None] * N_REPLICAS
+        pair_rates_all = [None] * N_REPLICAS
         for future in as_completed(futures):
             r = futures[future]
-            th, acc_r, acc_dl, swap_rate, elapsed = future.result()
+            th, acc_r, acc_dl, swap_rate, elapsed, pair_swap_rates = future.result()
             results[r] = th
+            pair_rates_all[r] = pair_swap_rates
             print(f"  Replica {r+1} done ({elapsed:.1f}s): "
                   f"cold-reg-acc={acc_r[0]/(N_WARMUP+N_DRAWS):.2f}  "
                   f"swap-rate={swap_rate:.2f}")
 
     total_elapsed = time.time() - t_total
+
+    pair_rates_mean = np.mean(np.stack(pair_rates_all), axis=0)
+    print(f"\n  Per-pair swap acceptance (draws phase, avg over {N_REPLICAS} replicas):")
+    for i in range(len(TEMPS) - 1):
+        print(f"    T{i}={TEMPS[i]:.2f} <-> T{i+1}={TEMPS[i+1]:.2f}: "
+              f"{pair_rates_mean[i]:.3f}")
+
     chains_arr = np.stack(results)   # (N_REPLICAS, N_DRAWS, 5)
     all_draws  = chains_arr.reshape(-1, 5)
 

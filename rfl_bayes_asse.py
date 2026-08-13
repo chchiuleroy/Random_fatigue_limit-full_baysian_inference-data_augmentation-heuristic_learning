@@ -101,10 +101,24 @@ def compute_asse_posterior(idata, error="sev", only_fail=True):
 
     idata  : pm.sample 輸出的 InferenceData
     error  : 'sev' | 'normal'
-    only_fail : True → 只算 73 個失效觀測；False → 全 75 個
+    only_fail : True → 只算 73 個失效觀測（README「排除設限觀測」做法，
+                本檔預設值，headline 13.83/13.13 用的就是這組）；
+                False → 全 75 個，見下方已知簡化
+
+    已知簡化（only_fail=False 時，2026-08-13 記錄，未修正計算，非本次
+    精確度修正範圍）：設限觀測的殘差直接用 |Y_OBS[cens_idx] - y_pred|
+    計算，但 Y_OBS 對設限列存的是設限門檻（同組併列最大值），不是真實
+    失效時間，也沒有做條件期望插補——等於把設限門檻當成真實 outcome
+    算誤差，README 原本描述的兩種正規做法（排除 / conditional
+    expectation imputation）都不是。
 
     返回 asse_samples (n_chains × n_draws,)
     """
+    if error not in ("sev", "normal"):
+        # 2026-08-13 fix: 原本 `if error == "sev": ... else: ...` 對任何
+        # 打錯字的值（如 "SEV"）都會靜默落入 else 分支（無 Euler
+        # correction），沒有任何錯誤訊息，容易算出錯誤結果卻不自知。
+        raise ValueError(f"error must be 'sev' or 'normal', got {error!r}")
     post = idata.posterior
 
     # 取後驗樣本 → (n_c, n_d)
@@ -178,6 +192,16 @@ if __name__ == "__main__":
     print("\nPosterior summary (global params):")
     print(summ[["mean","sd","eti89_lb","eti89_ub","r_hat","ess_bulk"]].to_string())
 
+    # 2026-08-13 fix: the block above only checked the 5 named global
+    # params, never the 75 z_delta latent variables that are also part of
+    # the sampled state (80-dim total) -- a global param can look converged
+    # while individual latents haven't. Summarize the worst-case across all
+    # 75 dims instead of printing all of them (too verbose for routine runs).
+    z_summ = az.summary(idata, var_names=["z_delta"], round_to=4)
+    print(f"\nz_delta (75 latent Δᵢ, worst-case across all dims): "
+          f"max r_hat={z_summ['r_hat'].max():.4f}  "
+          f"min ess_bulk={z_summ['ess_bulk'].min():.0f}")
+
     # ── ASSE 後驗計算 ────────────────────────────────────────────────
     print("\n" + "="*60)
     print("  ASSE POSTERIOR DISTRIBUTION")
@@ -202,6 +226,24 @@ if __name__ == "__main__":
           f"{np.percentile(asse_all,97.5):.4f}]")
 
     # ── Plugin ASSE（後驗均值代入）────────────────────────────────────
+    # 2026-08-13 note (wording corrected after 小o review): delta_pm here
+    # is exp(E[mu_d]+E[sigma_d]*E[z_delta]) -- a plug-in FITTED POINT
+    # ESTIMATE using posterior MEANS of the underlying Normal parameters
+    # (and each specimen's own posterior mean z_delta), evaluated once.
+    # This is NOT the same quantity as `delta_mean` in the "Per-specimen Δ
+    # posterior" section below, which is E[exp(mu_d+sigma_d*z_delta)] --
+    # the true posterior mean of Δ, averaged per-draw. This is NOT simply
+    # Jensen's inequality (exp is convex, but the plug-in version also
+    # replaces E[sigma_d*z] with E[sigma_d]*E[z], discarding the posterior
+    # correlation between sigma_d and z_delta) -- the accurate statement is
+    # that exp()'s nonlinearity combined with the joint posterior
+    # correlation of (mu_d, sigma_d, z_delta) makes "average-then-
+    # transform" and "transform-then-average" generally non-commuting,
+    # with no fixed ordering between them. They intentionally answer
+    # different questions (plug-in fitted estimate vs. posterior
+    # expectation) and are not meant to match numerically -- flagged here
+    # since both sections reuse the name "delta" and were previously easy
+    # to conflate.
     pm_  = {v: float(idata.posterior[v].mean()) for v in
             ["beta0","beta1","sigma","mu_d","sigma_d"]}
     z_pm = idata.posterior["z_delta"].values.mean(axis=(0,1))   # (N_OBS,)
@@ -238,6 +280,9 @@ if __name__ == "__main__":
     print(f"  z-ASSE 在 z-score 空間計算；y-ASSE 在 ln(壽命) 空間計算。")
 
     # ── Per-specimen Δ 後驗均值 ───────────────────────────────────────
+    # delta_mean below is E[exp(mu_d+sigma_d*z_delta)] (properly averaged
+    # per posterior draw) -- NOT the same quantity as delta_pm above, see
+    # the note there.
     print(f"\n  {'─'*58}")
     print(f"  PER-SPECIMEN Δ POSTERIOR (mean ± sd)")
     print(f"  {'─'*58}")

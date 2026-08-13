@@ -4,19 +4,28 @@ rfl_pymc_da.py — RFL Data Augmentation + NUTS
 ==============================================
 改變：不再數值積分掉 Δ，改為明確取樣每個 Δᵢ
 
-  log(Δᵢ) ~ TruncatedNormal(μ_Δ, σ_Δ, upper=log(Sᵢ))
-  ↓ NCP：直接讓 PyMC 在截斷常態上用 NUTS
+  z_Δᵢ ~ N(0, 1)；log(Δᵢ) = μ_Δ + σ_Δ · z_Δᵢ   (NCP，未截斷 LogNormal)
+  ↓ Δᵢ < Sᵢ 只靠 likelihood 裡的 pt.maximum(Sᵢ-Δᵢ, 1e-8) soft floor 近似生效，
+    不是真正的 hard-support 截斷（見下方「已知簡化」）
 
 優點：
   - 不需 as_op → 可以 pickle → 4 chains 真正平行
   - PyMC autodiff 計算梯度 → NUTS 取代 Metropolis
-  - 解決 funnel 問題（TruncatedNormal 的 NCP 已內建）
+  - NCP 打破 (μ_Δ,σ_Δ)↔z_Δᵢ 的 Neal's Funnel
   - 總參數空間：5 + 75(Δᵢ) = 80 維，NUTS 擅長
 
 模型：
   Normal error:  ln N_i | Δᵢ ~ N(β₀ + β₁ ln(Sᵢ-Δᵢ), σ²)
   SEV   error:   ln N_i | Δᵢ ~ SEV(β₀ + β₁ ln(Sᵢ-Δᵢ), σ)
-  LogNormal g(Δ): Δᵢ ~ LN(μ_Δ, σ_Δ)，截斷在 (0, Sᵢ)
+  LogNormal g(Δ): Δᵢ ~ LN(μ_Δ, σ_Δ)，**未截斷**（支撐集為全部正實數）
+
+已知簡化（2026-08-12 review 發現，Roy 決定不動——真正加 hard truncation
+是額外建模工作，見 README.md §5.1/§5.5、[[concept_model_zscore_bayes_hl]]）：
+  Δᵢ < Sᵢ 這個約束沒有反映在 prior 的支撐集或正規化常數上，只靠
+  pt.maximum(S_OBS-delta, 1e-8) 在 likelihood 裡防止 log(負數)，這在
+  Δᵢ=Sⱼ 處會產生不平滑轉折點（kink），且少了真正截斷該有的正規化常數
+  對 μ_Δ/σ_Δ 後驗的影響。docstring 過去誤寫成 TruncatedNormal，已於
+  2026-08-13 修正用詞以符合實際實作（不影響任何已發布數字，純屬描述精確度）。
 """
 import warnings; warnings.filterwarnings("ignore")
 import numpy as np
@@ -72,12 +81,21 @@ def build_da_model(error='normal', g_type='lognormal'):
     error  : 'normal' | 'sev'
     g_type : 'lognormal' | 'gamma'
 
-    LogNormal g(Δ) — TRUE NCP:
+    LogNormal g(Δ) — TRUE NCP，未截斷：
       z_Δᵢ ~ Normal(0,1)  →  log(Δᵢ) = μ_Δ + σ_Δ·z_Δᵢ
-    Gamma g(Δ):
-      log(Δᵢ) ~ Normal(μ_log, σ_log) [log-Normal approximation for NCP]
-      實際上透過 pm.Truncated(Gamma) 直接取樣，upper=S_i
+    Gamma g(Δ) — 同樣未截斷（2026-08-13 修正此處過時 docstring，
+      舊版誤寫成「透過 pm.Truncated(Gamma) 直接取樣」，實際程式碼
+      下方 121 行本身就寫「不用 Truncated（初始化不穩定）」，兩者矛盾）：
+      delta ~ pm.Gamma(alpha_d, beta_r)，Δᵢ<Sᵢ 約束跟 LogNormal 分支
+      一樣只靠 likelihood 的 pt.maximum(S-Δ, 1e-8) soft floor 近似生效
     """
+    if error not in ('normal', 'sev'):
+        # 2026-08-13 fix (小o review 發現同一類問題已在 rfl_bayes_asse.py
+        # 修過)：原本 `if error=='normal': ... else: # SEV` 對任何打錯字
+        # 的值都會靜默落入 SEV 分支，不報錯。
+        raise ValueError(f"error must be 'normal' or 'sev', got {error!r}")
+    if g_type not in ('lognormal', 'gamma'):
+        raise ValueError(f"g_type must be 'lognormal' or 'gamma', got {g_type!r}")
     upper_mu_d = float(np.log(MIN_S) - 0.05)
 
     with pm.Model() as model:
@@ -109,14 +127,20 @@ def build_da_model(error='normal', g_type='lognormal'):
             delta     = pm.Deterministic("delta", pt.exp(log_delta))
         else:
             # Gamma: 不用 Truncated（初始化不穩定）
-            # 改用 pm.Gamma + soft constraint：
-            # 當 delta≥S_i 時，log(S_i-delta)→很大負值，
-            # b1<0 → mu_cond→+∞ → likelihood→-∞，NUTS 自動遠離
+            # 改用 pm.Gamma + soft constraint（2026-08-13 修正措辭，
+            # 小o review 指出這不是真的無限大懲罰）：
+            # 當 delta≥S_i 時，maximum(S_i-delta,1e-8) 被地板到 1e-8，
+            # log(1e-8)≈-18.4 是很大但有限的負值，b1<0 → mu_cond 變成
+            # 很大的正值 → likelihood 受到強烈但有限的懲罰，NUTS 通常會
+            # 遠離，但這不是嚴格意義上把 likelihood 推到 -∞ 的 hard
+            # constraint
             delta = pm.Gamma("delta", alpha=alpha_d, beta=beta_r, shape=N_OBS)
 
         # ── Conditional mean ────────────────────────────────────────────
         # μ(Sᵢ, Δᵢ) = β₀ + β₁ ln(Sᵢ − Δᵢ)
-        # clip(S-δ, 1e-8) → likelihood → -∞ when δ≥S, enforcing constraint
+        # clip(S-δ, 1e-8) → 施加強烈但有限的 likelihood 懲罰（非真正 -∞
+        # 的 hard constraint，2026-08-13 修正措辭，見上方 Gamma 分支同一
+        # 個機制的說明）
         mu_cond = b0 + b1 * pt.log(pt.maximum(S_OBS - delta, 1e-8))
 
         # ── Likelihood ──────────────────────────────────────────────────

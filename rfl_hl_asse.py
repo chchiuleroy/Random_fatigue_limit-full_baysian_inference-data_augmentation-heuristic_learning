@@ -173,7 +173,15 @@ def H1_marginal_cdf(b0, b1, sig, mu_d, sd_d, error='sev'):
 
 
 def H2_cornish_fisher(b0, b1, sig, mu_d, sd_d, error='sev'):
-    """H2: Cornish-Fisher 偏度修正 — 處理邊際分佈的非對稱性"""
+    """H2: Cornish-Fisher 偏度修正 — 處理邊際分佈的非對稱性
+
+    已知簡化（2026-08-13 記錄，未修正計算本身，會改變下方已發布 ASSE 數字，
+    非本次精確度修正範圍）：marginal_skewness() 只算了條件均值 mu_c(Δ) 隨 Δ
+    變化貢獻的偏度（between-Δ），漏掉 SEV 殘差本身固定的偏度（within-Δ，
+    SEV/Gumbel-type 分佈的偏度是與參數無關的常數）——依全期望公式
+    (law of total cumulants)，完整邊際三階動差應該是兩者之和，目前只算了
+    第一項。
+    """
     EV_fn = E_V_sev if error=='sev' else E_V_normal
     asse = 0.0
     for s_j in S_UNIQ:
@@ -208,7 +216,22 @@ def H3_calibrated(b0, b1, sig, mu_d, sd_d, error='sev'):
 
 
 def H4_da_posterior(idata, error='sev'):
-    """H4: 直接用 DA 後驗的 E[Δᵢ|data] — 終極對照（不用 z-score）"""
+    """H4: 直接用 DA 後驗的 E[Δᵢ|data] — 終極對照（不用 z-score）
+
+    已知簡化（2026-08-13 記錄，2026-08-13 小o review 後修正措辭，未修正
+    計算本身，會改變下方已發布 ASSE 數字，非本次精確度修正範圍）：這裡先把
+    mu_d/sigma_d 壓成後驗均值（mudp/sddp），再用這組固定值搭配每個 draw
+    自己的 z_delta 變換、最後對 draws 取平均——等於算
+    exp(mean(mu_d) + mean(sigma_d)*z^(s)) 的平均，不是嚴格定義下「每個
+    draw 各自變換再平均」的 E[Δᵢ|data] = mean_s[exp(mu_d^(s) +
+    sigma_d^(s)*z_delta_i^(s))]。兩者一般不相等，但不是單純的 Jensen
+    不等式問題（exp() 凸函數只保證 E[exp(X)]≥exp(E[X])，而這裡的 plug-in
+    版本還把 E[σ_Δ·z] 換成 E[σ_Δ]·E[z]，等於同時忽略了 σ_Δ 與 z_delta
+    在聯合後驗中的相關性）——正確說法是 exp() 的非線性加上
+    (mu_d,sigma_d,z_delta) 聯合後驗的相關性，讓「先平均再變換」與
+    「逐 draw 變換再平均」通常不可交換，兩者也沒有一般固定的大小關係；
+    名稱與實作有落差。
+    """
     post = idata.posterior
     b0p  = float(post["beta0"].mean()); b1p = float(post["beta1"].mean())
     sigp = float(post["sigma"].mean())

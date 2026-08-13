@@ -166,13 +166,13 @@ Decoupling the prior from hyperparameters $(\mu_\Delta, \sigma_\Delta)$ flattens
 
 **Theoretical mean** (32-point Gauss-Legendre integration):
 
-$$E(\ln N \mid S_j) = \hat{\beta}_0 - \hat{\sigma}\gamma_E + \hat{\beta}_1 \int_0^{S_j} \ln(S_j - \Delta) \cdot g(\Delta \mid \hat{\mu}_\Delta, \hat{\sigma}_\Delta) \thinspace d\Delta$$
+$$E(\ln N \mid S_j) = \hat{\beta}_0 - \hat{\sigma}\gamma_E + \hat{\beta}_1 \cdot \frac{\displaystyle\int_0^{S_j} \ln(S_j - \Delta) \cdot g(\Delta \mid \hat{\mu}_\Delta, \hat{\sigma}_\Delta) \thinspace d\Delta}{F_\Delta(S_j)}, \qquad F_\Delta(S_j) = \int_0^{S_j} g(\Delta \mid \hat{\mu}_\Delta, \hat{\sigma}_\Delta) \thinspace d\Delta$$
 
-where $\gamma_E = 0.5772$ (Euler-Mascheroni constant).
+where $\gamma_E = 0.5772$ (Euler-Mascheroni constant). $g(\Delta\mid\cdot)$ is the (untruncated) LogNormal density, so the raw integral over $[0,S_j]$ is not itself a conditional expectation — dividing by $F_\Delta(S_j)$ (the LogNormal CDF at $S_j$, i.e. $P(\Delta<S_j)$) is what makes this $E[\ln(S_j-\Delta)\mid\Delta<S_j]$. `_gl_moments()` in `rfl_model_zscore_asse.py` computes this correctly (the quadrature weight sum `norm` *is* the discretized $F_\Delta(S_j)$, and both `E1`/`E2` divide by it) — this formula previously omitted the denominator, which the code has always included (2026-08-13 fix, precision-only, does not change any reported number).
 
-**Theoretical variance** (correctly separating two sources):
+**Theoretical variance** (correctly separating two sources; $\text{Var}[\cdot]$ here means the same $\Delta<S_j$-conditional variance as above, i.e. computed from the same $F_\Delta(S_j)$-normalized moments):
 
-$$V(\ln N \mid S_j) = \hat{\beta}_1^2 \cdot \underbrace{\text{Var}[\ln(S_j - \Delta)]}_{\Delta\text{ contribution}} + \underbrace{\frac{\pi^2 \hat{\sigma}^2}{6}}_{\text{SEV term}} \quad \left(\text{Normal: } \hat{\sigma}^2\right)$$
+$$V(\ln N \mid S_j) = \hat{\beta}_1^2 \cdot \underbrace{\text{Var}[\ln(S_j - \Delta) \mid \Delta<S_j]}_{\Delta\text{ contribution}} + \underbrace{\frac{\pi^2 \hat{\sigma}^2}{6}}_{\text{SEV term}} \quad \left(\text{Normal: } \hat{\sigma}^2\right)$$
 
 #### Step 2: Complete Prediction Pipeline
 
@@ -212,9 +212,13 @@ HL enumerates the five candidate strategies H0–H4 and selects the one with max
 |-----------|---------------------|------------------------------|
 | **H0 (model z-score)** | $\Phi(z)$ | LogNormal inverse CDF |
 | H1 | Exact marginal CDF (numerical integration) | Same |
-| H2 | Cornish-Fisher $\Phi(z + \gamma_1(z^2-1)/6)$ | Same |
-| H3 | Per-group z calibration (subtract group mean) | Same |
-| H4 | — | DA posterior $E[\Delta_i \mid \mathbf{y}, \theta^{(s)}]$ |
+| H2 | Cornish-Fisher $\Phi(z + \gamma_1(z^2-1)/6)$ [^h2-skew] | Same |
+| H3 | Per-group z calibration (subtract group mean **and divide by group SD**, floored at 0.5) | Same |
+| H4 | — | DA posterior $E[\Delta_i \mid \mathbf{y}, \theta^{(s)}]$ [^h4-plugin] |
+
+[^h2-skew]: `marginal_skewness()` in `rfl_hl_asse.py` only computes the 3rd central moment of the *conditional mean* $\mu_c(\Delta) = \beta_0+\beta_1\ln(S_j-\Delta)-\sigma\gamma_E$ as $\Delta$ varies (the "between-$\Delta$" skewness contribution). It omits the SEV residual's own skewness (a fixed constant of the SEV/Gumbel-type family, independent of $\Delta$) — the "within-$\Delta$" contribution the law of total cumulants would also require. Because this model's residual conditional variance doesn't depend on $\Delta$, the cross term in the total-cumulant expansion vanishes, so a correct fix genuinely is just adding the two terms (between-$\Delta$ + within-$\Delta$), not a more complex re-derivation — 2026-08-13: documented as a known gap (precision-only pass, this project's scope, confirmed by 小o review); doing the addition is real modeling work that would change the reported H2 ASSE numbers below and hasn't been done.
+
+[^h4-plugin]: Despite the "$E[\Delta_i\mid\text{data}]$" name, `H4_da_posterior()` collapses $\mu_\Delta,\sigma_\Delta$ to their posterior **means** first, then transforms each draw's $z_{\Delta_i}$ through those fixed point estimates and averages — i.e. $\exp(\bar\mu_\Delta+\bar\sigma_\Delta z_{\Delta_i}^{(s)})$ averaged over $s$, not the proper per-draw transform-then-average $\frac{1}{S}\sum_s\exp(\mu_\Delta^{(s)}+\sigma_\Delta^{(s)}z_{\Delta_i}^{(s)})$. This is not simply Jensen's inequality (2026-08-13, corrected after 小o review) — $\exp(\cdot)$ being convex only gives $E[\exp(X)]\geq\exp(E[X])$, but the plug-in version also replaces $E[\sigma_\Delta z]$ with $E[\sigma_\Delta]E[z]$, discarding the posterior correlation between $\sigma_\Delta$ and $z_{\Delta_i}$; the accurate statement is that $\exp$'s nonlinearity combined with that joint-posterior correlation makes "average-then-transform" and "transform-then-average" generally non-commuting, with no fixed ordering between them. Documented as a known approximation; a properly-averaged H4 number would need the analysis re-run against retained posterior draws (this codebase doesn't currently persist `idata` to disk, so in practice that means a fresh NUTS sample) and hasn't been done in this pass.
 
 ---
 
@@ -265,10 +269,12 @@ pm.Potential('likelihood', loglik.sum())
 
 #### Handling ASSE with Censoring
 
-The true $y_i$ is unknown for censored observations. Two approaches:
+The true $y_i$ is unknown for censored observations. Two principled approaches exist:
 
 1. **Exclude censored observations:** Compute ASSE using only $\delta_i = 1$ failures (most common)
 2. **Conditional expectation imputation:** Substitute $E[\ln N \mid \ln N > c_i, \Delta_i, \theta]$ for $y_i$, incorporating censored observations into ASSE
+
+`rfl_bayes_asse.py` implements neither for its "[B] all-75-obs" variant (`compute_asse_posterior(..., only_fail=False)`): it computes `|Y_OBS - y_pred|` using `Y_OBS` for the censored rows too, which is the recorded **censoring threshold** (the tied-max runout value) rather than the true unobserved failure time or its imputed expectation — i.e. it treats the threshold as if it were the ground-truth outcome. This understates the true residual for a right-censored point whose real failure time is beyond the threshold. 2026-08-13: documented as a known simplification (precision-only pass); the "[A] failures-only" variant (approach 1 above, `only_fail=True`) is the one actually consistent with either documented approach and is what the headline y-ASSE numbers in this README use.
 
 ---
 
