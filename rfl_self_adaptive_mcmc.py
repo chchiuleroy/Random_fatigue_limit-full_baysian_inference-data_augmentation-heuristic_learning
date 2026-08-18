@@ -15,12 +15,22 @@ Algorithm: 4-block Gibbs sweep
   D: log Delta_i each     -- vectorised Self-Adaptive MH (parallel per obs)
 
 Self-Regulating alpha (HTDM analogy applied to MCMC proposals):
-  alpha(d^2, dim) = sqrt((nu + d^2) / (nu + dim - 2))  [dim >= 2]
-                  = sqrt((nu + d^2) / (nu - 1))          [dim = 1]
+  alpha(d^2, dim) = sqrt((nu + d^2) / (nu + dim))
   d^2 = Mahalanobis distance^2 from current point to running mean
 
   Far from mean (large d^2) -> alpha > 1 -> proposal expanded  (high-T: explore)
   Near mean (small d^2)     -> alpha < 1 -> proposal contracted (low-T: refine)
+
+  2026-08-18 doc fix: this header previously stated a different formula
+  (`(nu+d^2)/(nu+dim-2)` for dim>=2, `(nu+d^2)/(nu-1)` for dim=1) that
+  never matched the actual implementation -- self_reg_alpha() below (used
+  by Block A, dim=3) and Block D's inline per-Delta_i formula (dim=1,
+  `sqrt((nu+d2_i)/(nu+1.0))`) both use the single `(nu+dim)` denominator
+  shown above, uniformly, with no dim-2/dim-1 special case. Block D's
+  clip range is [0.1, 4.0] vs. self_reg_alpha()'s [0.1, 3.0] -- an
+  asymmetry that predates this doc fix and is left as-is here (a clip
+  bound choice, not a formula bug; changing it would be a behavior
+  change, out of scope for a documentation-only fix).
 
 Key insight: by using exact Gibbs for (mu_Delta, sigma_Delta), we avoid
 the MH acceptance collapse that occurs when moving the hyperparameters
@@ -381,6 +391,16 @@ def _run_chain(seed, n_warmup, n_draws, nu, verbose):
     h_dl        = 2.38    # Delta step: max(h_dl * running_std * alpha_i, min_step)
     min_step    = 0.04    # floor ~= sigma_Delta (avoids vanishing step early on)
     N_DL_SWEEPS = 1       # Block D sweeps per Gibbs iteration
+
+    # n_warmup=0 boundary fix: step_i_frozen is normally set at it==n_warmup
+    # from the warmup-phase window average (see "elif it == n_warmup and
+    # step_dl_recent" below), but if n_warmup=0 that branch never runs
+    # (step_dl_recent stays empty) and Block D's first sweep crashed with
+    # UnboundLocalError. Fall back to the pilot run's Welford std (200 real
+    # adaptation iterations just above, _wvv_p) so n_warmup=0 degrades to
+    # "use the pilot-run step size for the whole draws phase" instead of
+    # crashing.
+    step_i_frozen = np.maximum(h_dl * _wvv_p.std, min_step)
 
     # NOTE: Block E (translation chain) was removed.  Uniform shifts of all
     # log_delta_i bias the chain toward larger Δ when individual log_delta_i

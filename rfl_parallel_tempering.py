@@ -295,6 +295,7 @@ def _run_pt_replica(seed, n_warmup, n_draws, nu, temps, swap_interval, verbose):
         log_deltas[k] = np.clip(log_deltas[k], -5.0, LOG_S - 0.001)
 
     # -- Pilot run for all chains (200 steps of Block B/C/D) ----------------
+    _pilot_std = np.zeros((K, N_OBS))  # fallback for step_dl_frozen_arr if n_warmup=0
     for k in range(K):
         _wvv_p = WelfordVarVec(N_OBS)
         for _ in range(200):
@@ -312,6 +313,7 @@ def _run_pt_replica(seed, n_warmup, n_draws, nu, temps, swap_interval, verbose):
             _lr = (_pp + _lp) - (_pc + _lc)
             _acc = _vld & (np.log(rng.uniform(size=N_OBS)) < _lr)
             log_deltas[k] = np.where(_acc, _ldp, log_deltas[k])
+        _pilot_std[k] = _wvv_p.std
 
     # -- Warm-start Welford for each chain ----------------------------------
     sd0c, sd1c, sdlsc = 0.083, 0.062, 0.080
@@ -349,7 +351,14 @@ def _run_pt_replica(seed, n_warmup, n_draws, nu, temps, swap_interval, verbose):
     # favor of freezing). Populated at it == n_warmup.
     C_reg_frozen     = [None] * K
     alpha_reg_frozen = np.ones(K)
-    step_dl_frozen_arr = None   # (K, N_OBS), set once warmup ends
+    # (K, N_OBS), overwritten every warmup iteration once warmup starts.
+    # n_warmup=0 boundary fix: previously left as None here, and Block D's
+    # `if warmup:` branch below never runs when n_warmup=0 -- step_all was
+    # then None and crashed the very first rng.normal(0.0, step_all) call.
+    # Fall back to the per-chain pilot-run std (200 real adaptation
+    # iterations, _pilot_std above) so n_warmup=0 degrades to "use the
+    # pilot-run step size for the whole draws phase" instead of crashing.
+    step_dl_frozen_arr = np.maximum(h_dls[:, None] * _pilot_std, 0.04)
 
     t0 = time.time()
 

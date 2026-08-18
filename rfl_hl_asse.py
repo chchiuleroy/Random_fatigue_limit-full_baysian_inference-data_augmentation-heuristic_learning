@@ -120,7 +120,39 @@ def marginal_cdf(y, b0, b1, sig, mu_d, sd_d, S_j, error='sev'):
 
 
 def marginal_skewness(b0, b1, sig, mu_d, sd_d, S_j, E_j, V_j):
-    """3rd central moment → skewness for Cornish-Fisher"""
+    """3rd central moment -> skewness for Cornish-Fisher.
+
+    2026-08-18 fix (was a known simplification, see rfl_hl_asse.py H2
+    docstring / concept_model_zscore_bayes_hl.md before this date): the
+    generative model is Y|S_j = [b0+b1*log(S_j-Delta)] + sigma*Z0, Z0 ~
+    SEV(0,1) noise independent of Delta, E[Z0]=-EULER_GAMMA. Since `mu_c`
+    below already equals E[Y|Delta] = [b0+b1*log(S_j-Delta)] - sigma*
+    EULER_GAMMA, the decomposition against mu_c is Y = mu_c(Delta) +
+    sigma*(Z0+EULER_GAMMA) -- the mean-zero-centered residual, not
+    mu_c(Delta)+sigma*Z0 as an earlier draft of this comment said (2026-08-18
+    小o review caught the double-counted mean). This doesn't change the
+    fix itself: shifting by a constant (+EULER_GAMMA) leaves central moments
+    unchanged, so sigma^3 times Z0's own 3rd central moment is still the
+    right within-Delta term. mu_c(Delta) varies with the random Delta
+    (between-Delta) and (Z0+EULER_GAMMA) is independent of Delta
+    (within-Delta); for independent components, third central moments add
+    (law of total cumulants), so the total is the between-Delta term (m3
+    below, as before) PLUS the within-Delta term contributed by the SEV
+    residual's own fixed skewness -- a model-independent constant, not
+    previously included. SEV(0,1) (CDF = 1-exp(-exp(z)), the "smallest
+    extreme value"/Gumbel_min family used by this model's likelihood) has
+    3rd central moment = -2*zeta(3) (Gumbel_max's is +2*zeta(3); Gumbel_min
+    is its mirror image -- cross-checked against SciPy's gumbel_l/gumbel_r
+    docs, 2026-08-18 小o review), scaled by sigma^3 since Y's residual is
+    sigma*Z0. Only called for error='sev' (H2_cornish_fisher's caller
+    already sends gamma1=0.0 for error='normal', since a Normal residual
+    has zero skewness by construction). V_j (the denominator, from the
+    caller's E_V_sev()) is dimensionally consistent with this: E_V_sev()
+    returns b1**2*Var[ln(S-Delta)] + PI2_OVER_6*sig**2, and PI2_OVER_6*sig**2
+    = sigma^2*Var(Z0) since Var(Z0)=pi^2/6 for standard SEV -- verified by
+    reading E_V_sev() directly (2026-08-18, in response to 小o flagging this
+    as the one point that needed checking against code not shown in review).
+    """
     d_pts = S_j/2*(GL_X+1); jac = S_j/2
     log_d = np.log(np.maximum(d_pts,1e-300))
     log_Sd= np.log(np.maximum(S_j-d_pts,1e-300))
@@ -129,8 +161,9 @@ def marginal_skewness(b0, b1, sig, mu_d, sd_d, S_j, E_j, V_j):
     norm  = w_g.sum()
     if norm < 1e-10: return 0.0
     mu_c  = b0+b1*log_Sd-sig*EULER_GAMMA   # SEV mean
-    m3    = np.dot(w_g, (mu_c-E_j)**3)/norm
-    return m3 / max(V_j**1.5, 1e-10)
+    m3_between = np.dot(w_g, (mu_c-E_j)**3)/norm
+    m3_within  = -2.0*special.zeta(3, 1)*sig**3   # SEV(0,1) 3rd central moment = -2*zeta(3), scaled by sigma^3
+    return (m3_between + m3_within) / max(V_j**1.5, 1e-10)
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -218,27 +251,27 @@ def H3_calibrated(b0, b1, sig, mu_d, sd_d, error='sev'):
 def H4_da_posterior(idata, error='sev'):
     """H4: 直接用 DA 後驗的 E[Δᵢ|data] — 終極對照（不用 z-score）
 
-    已知簡化（2026-08-13 記錄，2026-08-13 小o review 後修正措辭，未修正
-    計算本身，會改變下方已發布 ASSE 數字，非本次精確度修正範圍）：這裡先把
-    mu_d/sigma_d 壓成後驗均值（mudp/sddp），再用這組固定值搭配每個 draw
-    自己的 z_delta 變換、最後對 draws 取平均——等於算
-    exp(mean(mu_d) + mean(sigma_d)*z^(s)) 的平均，不是嚴格定義下「每個
-    draw 各自變換再平均」的 E[Δᵢ|data] = mean_s[exp(mu_d^(s) +
-    sigma_d^(s)*z_delta_i^(s))]。兩者一般不相等，但不是單純的 Jensen
-    不等式問題（exp() 凸函數只保證 E[exp(X)]≥exp(E[X])，而這裡的 plug-in
-    版本還把 E[σ_Δ·z] 換成 E[σ_Δ]·E[z]，等於同時忽略了 σ_Δ 與 z_delta
-    在聯合後驗中的相關性）——正確說法是 exp() 的非線性加上
-    (mu_d,sigma_d,z_delta) 聯合後驗的相關性，讓「先平均再變換」與
-    「逐 draw 變換再平均」通常不可交換，兩者也沒有一般固定的大小關係；
-    名稱與實作有落差。
+    2026-08-18 修正（先前為已知簡化，見 concept_model_zscore_bayes_hl.md
+    2026-08-18 前的版本）：舊版先把 mu_d/sigma_d 壓成後驗均值（mudp/sddp），
+    再用這組固定值搭配每個 draw 自己的 z_delta 變換、最後對 draws 取平均
+    ——等於算 exp(mean(mu_d) + mean(sigma_d)*z^(s)) 的平均，跟命名
+    「E[Δᵢ|data]」不符。現在改成逐 draw 用該 draw 自己的
+    mu_d^(s)/sigma_d^(s) 搭配同一 draw 的 z_delta_i^(s) 變換，再對所有
+    (chain, draw) 取平均，才是嚴格定義下的
+    E[Δᵢ|data] = mean_s[exp(mu_d^(s) + sigma_d^(s)*z_delta_i^(s))]。
+    b0p/b1p/sigp（迴歸係數）仍用後驗均值 plug-in——這是 H4 對照 wiki
+    「Plugin ASSE」與「Per-specimen 後驗」兩種不同估計量時，H4 本來就定位
+    為「Δᵢ 用真後驗均值、其餘係數仍 plug-in」的中間對照，非本次修正範圍。
     """
     post = idata.posterior
     b0p  = float(post["beta0"].mean()); b1p = float(post["beta1"].mean())
     sigp = float(post["sigma"].mean())
-    mudp = float(post["mu_d"].mean());  sddp = float(post["sigma_d"].mean())
+    mudp = float(post["mu_d"].mean());  sddp = float(post["sigma_d"].mean())  # 僅供 return/紀錄，不再用於計算 delta_post
+    mu_d_draws  = post["mu_d"].values[..., None]      # (n_c, n_d, 1)
+    sig_d_draws = post["sigma_d"].values[..., None]   # (n_c, n_d, 1)
     z_d  = post["z_delta"].values       # (n_c, n_d, N_OBS)
-    delta_post = np.exp(mudp + sddp * z_d)
-    D_mean = delta_post.mean(axis=(0,1))  # posterior mean of each Delta_i
+    delta_post = np.exp(mu_d_draws + sig_d_draws * z_d)  # 逐 draw 變換
+    D_mean = delta_post.mean(axis=(0,1))  # 真正的 E[Delta_i|data]（逐 draw 變換再平均）
     euler  = EULER_GAMMA if error=='sev' else 0.0
     D_clip = np.clip(D_mean[fail_idx], 1e-6, S_OBS[fail_idx]*0.999)
     y_hat  = b0p + b1p*np.log(S_OBS[fail_idx]-D_clip) - sigp*euler
