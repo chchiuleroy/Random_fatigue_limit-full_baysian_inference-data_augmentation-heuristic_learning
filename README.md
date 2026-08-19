@@ -299,7 +299,7 @@ The true $y_i$ is unknown for censored observations. Two principled approaches e
 
 ### 5.1 MCMC Convergence (SEV + LogNormal, Best Model)
 
-> **⚠️ 2026-08-12 — "Divergences = 0" does not currently reproduce; see §5.5 note for the full diagnostic (independently reviewed by 小o).** Re-running `rfl_pymc_da.py`'s exact SEV+LogNormal model (same code, same `initvals`, same `random_seed=[0,1,2,3]`) in the current environment gives **2214 divergences**, not 0 — confirmed **not** a script-specific error: all three RFL PyMC scripts (this one, `rfl_model_zscore_asse.py`, `rfl_hl_asse.py`) give the identical divergence count when run side-by-side today. Why the original "0" no longer reproduces is unconfirmed (a missing `g++`/different PyTensor compilation path is one plausible factor, not a verified cause — see §5.5).
+> **⚠️ 2026-08-12 — "Divergences = 0" does not currently reproduce; see the full diagnostic in [[concept_model_zscore_bayes_hl]] (roy_km wiki, independently reviewed by 小o).** Re-running `rfl_pymc_da.py`'s exact SEV+LogNormal model (same code, same `initvals`, same `random_seed=[0,1,2,3]`) in the current environment gives **2214 divergences**, not 0 — confirmed **not** a script-specific error: all three RFL PyMC scripts (this one, `rfl_model_zscore_asse.py`, `rfl_hl_asse.py`) give the identical divergence count when run side-by-side today. Why the original "0" no longer reproduces is unconfirmed (a missing `g++`/different PyTensor compilation path is one plausible factor, not a verified cause).
 
 | Metric | Value |
 |--------|-------|
@@ -348,7 +348,7 @@ During HMC/NUTS numerical integration, if energy conservation is severely violat
 - Divergences = 0: HMC operating normally; flat posterior geometry
 - Divergences > 0: reduce step size (increase `target_accept`) or switch to NCP
 
-**This study: Divergences = 0 as originally reported, but not reproducible as of 2026-08-12** — see the callout at the top of §5.1 and the full diagnostic in §5.5 (independently reviewed by 小o, `codex exec`, delegation-marked). Confirmed: not a current script-to-script difference (`rfl_pymc_da.py` itself now gives the same 2214 divergences as the other two RFL scripts under identical settings). What's *not* confirmed: an initial mean-based comparison suggested divergent draws correlate with larger $\sigma_\Delta$ rather than proximity to the hard $S_j - \Delta_i$ boundary — 小o's review flagged real gaps in that comparison (autocorrelated draws treated as independent samples, mean instead of tail quantiles, a stored divergent draw being the trajectory endpoint rather than necessarily where integration failed), so this NCP/CP-regime story is a **hypothesis, not a finding**. A sharper, independently-flagged lead: the code's docstring claims a truncated LogNormal for $\Delta_i$, but the implementation is an *untruncated* LogNormal plus a `pt.maximum(...)` soft penalty in the likelihood — a real model/implementation mismatch that's a more likely direct source of difficult geometry, and the better starting point for future work. Raising `target_accept` from 0.85 (2214 divergences) through 0.90/0.95/0.99 (1638/932/388) reduces but does not eliminate them, and 0.99 introduces `max_treedepth` warnings on all 4 chains (step-size sensitivity, not proof of a step-size-independent problem). Reparameterization (targeting the truncation mismatch above) is real modeling work, not implemented here; Roy's 2026-08-12 decision was to document this and move on rather than implement it in this pass.
+**This study: Divergences = 0 as originally reported, but not reproducible as of 2026-08-12** — see the callout at the top of §5.1 and the full diagnostic in [[concept_model_zscore_bayes_hl]] (roy_km wiki, independently reviewed by 小o, `codex exec`, delegation-marked). Confirmed: not a current script-to-script difference (`rfl_pymc_da.py` itself now gives the same 2214 divergences as the other two RFL scripts under identical settings). What's *not* confirmed: an initial mean-based comparison suggested divergent draws correlate with larger $\sigma_\Delta$ rather than proximity to the hard $S_j - \Delta_i$ boundary — 小o's review flagged real gaps in that comparison (autocorrelated draws treated as independent samples, mean instead of tail quantiles, a stored divergent draw being the trajectory endpoint rather than necessarily where integration failed), so this NCP/CP-regime story is a **hypothesis, not a finding**. A sharper, independently-flagged lead: the code's docstring claims a truncated LogNormal for $\Delta_i$, but the implementation is an *untruncated* LogNormal plus a `pt.maximum(...)` soft penalty in the likelihood — a real model/implementation mismatch that's a more likely direct source of difficult geometry, and the better starting point for future work. Raising `target_accept` from 0.85 (2214 divergences) through 0.90/0.95/0.99 (1638/932/388) reduces but does not eliminate them, and 0.99 introduces `max_treedepth` warnings on all 4 chains (step-size sensitivity, not proof of a step-size-independent problem). Reparameterization (targeting the truncation mismatch above) is real modeling work, not implemented here; Roy's 2026-08-12 decision was to document this and move on rather than implement it in this pass.
 
 ---
 
@@ -404,47 +404,19 @@ $$\text{LOO-ELPD} = \sum_{i=1}^{75} \log p(y_i \mid \mathbf{y}_{-i})$$
 | 0.900 | −0.99 | 0.470 | 0.471 |
 | 0.950 | −2.10 | 0.525 | 0.508 |
 
-The SD at low stress (S=0.675) is **2.5x** that at high stress (S=0.9), revealing a pronounced heteroscedastic structure. (SD (Normal) column corrected 2026-08-11 — see note in §5.5; both SEV and Normal columns now consistently tick back up at S=0.950.)
+The SD at low stress (S=0.675) is **2.5x** that at high stress (S=0.9), revealing a pronounced heteroscedastic structure. (SD (Normal) column corrected 2026-08-11 — both SEV and Normal columns now consistently tick back up at S=0.950.)
 
-### 5.5 Model Z-Score ASSE (y-ASSE, ln-lifetime space)
+### 5.5–5.6 Model Z-Score ASSE / HL Heuristic Search — superseded (2026-08-19)
 
-> **Note (2026-08-11):** `rfl_model_zscore_asse.py` and `rfl_hl_asse.py` had a bug where the "Normal+LN" branch silently reused the SEV likelihood instead of a real Normal likelihood. Numbers below are from the corrected rerun.
+> **Removed 2026-08-19.** These two sections used to show `rfl_model_zscore_asse.py`/`rfl_hl_asse.py`'s ASSE tables, computed over the stale 73-observation synthetic-censoring subset. Both scripts are superseded by `rfl_asse_full_sample.py` (§5.7), which computes the same "model z-score" method Roy confirmed as correct, but over the genuine full 75-observation sample. Repeating the old numbers here (even with warning labels) risked them being read as current results, so they're gone rather than annotated — **current numbers live only in §5.7**.
 >
-> **2026-08-12 divergence investigation (todo.md follow-up).** The original premise — that these two scripts diverge more than the "primary" `rfl_pymc_da.py` (2214/827 vs. 0) because of a model-building difference between the scripts — does **not** hold up: side-by-side testing in the same process, same environment, same `random_seed`, found `rfl_pymc_da.py`'s own SEV+LogNormal model *also* gives exactly 2214 divergences today. Line-by-line comparison of all three scripts' `build_model()`/`build_da_model()` found them structurally identical for the SEV+LogNormal case — **this specific conclusion (not a current script-to-script difference) is solid**; independent review (小o, `codex exec`, delegation-marked) confirmed it.
->
-> **What's *not* solid — and was corrected after review:** the diagnosis of *why* went further than the evidence supports. A mean-based comparison of divergent vs. non-divergent draws found divergent draws slightly *farther* from the hard $S_j - \Delta_i$ boundary (0.127 vs. 0.106) and correlated with larger $\sigma_\Delta$ (0.045 vs. 0.039). 小o's review flagged real methodological gaps in that comparison — draws are autocorrelated (not valid to treat as independent samples for a mean comparison), a stored "divergent" draw is the trajectory's *endpoint*, not necessarily where the integration actually failed, and a mean obscures the tail (should compare low quantiles / the fraction near-zero / worst margin per stress level, or bin by $\sigma_\Delta$ and plot the divergence *rate* per bin). **The NCP/CP-intermediate-regime explanation is downgraded from a conclusion to a hypothesis.**
->
-> 小o also flagged a sharper, more likely lead that the original diagnosis missed: the code's own docstring describes $\Delta_i$ as truncated LogNormal ("截斷在 (0, Sᵢ)"), but the actual implementation is an **untruncated** LogNormal (`delta = exp(mu_d + sigma_d*z_delta)`) combined with a `pt.maximum(S_OBS - delta, 1e-8)` *soft penalty* applied only through the likelihood — not a true truncated-support density. This creates a kink at $\Delta_i = S_j$ and omits the normalizing-constant effect a real truncation would have on $\mu_\Delta$/$\sigma_\Delta$'s posterior. This model/implementation mismatch is flagged as **more likely to be the direct source of difficult geometry** than the NCP-regime story, and is the better-targeted lead for anyone picking this up later.
->
-> The "environment changed (`g++` unavailable)" explanation for why `rfl_pymc_da.py` no longer reproduces its own "0 divergences" claim is **plausible but unconfirmed** — it only shows a compilation path is currently missing, not that this caused the historical change. Checking the original run's package versions (PyMC/PyTensor/NumPy/BLAS/Python) and PyTensor's compile mode would be needed to actually confirm this.
->
-> **What was tried:** raising `target_accept` from 0.85 (2214 divergences) to 0.90/0.95/0.99 gives 1638/932/388 — a real reduction, not a fix, and at 0.99 all 4 chains hit `max_treedepth` (this shows step-size sensitivity, not proof the geometry problem is step-size-independent — a subtly different claim than originally stated here). The standard fix for a persistent-but-shrinking divergence pattern — reparameterization (targeting the truncation/soft-constraint mismatch above, or a partial/hybrid NCP) — is genuine additional modeling work; Roy's 2026-08-12 decision was to document this rather than implement it in this pass. **`target_accept` default raised from 0.85 to 0.95** across all three scripts (all model branches, not just the diagnosed SEV+LogNormal one — a deliberate defensive default, not a per-branch evidence-based tuning) as a practical mitigation (932 divergences at $n=8000$ post-tuning draws, down from 2214) — **this reduces, it does not validate**: R-hat/ESS looking clean at 0.95 does not by itself guarantee an unbiased posterior while divergences remain. ASSE numbers below remain **provisional**.
->
-> **2026-08-19 update (todo.md follow-up):** the `target_accept: 0.85 → 0.95` change above was applied to the scripts, but the **SEV+LN H0 plugin number in the table below was never re-run** — it silently stayed at the stale 0.85-era value. Confirmed by direct A/B (same code/seed/initvals, only `target_accept` toggled): `0.85` reproduces `4.3187` (rounds to the old `4.32`) with `2214` divergences (exact match to the historical count); `0.95` reproduces `3.4766000503458594` with `932` divergences — matching `rfl_hl_asse.py`'s independent 2026-08-18 rerun to ~7 decimal places. **SEV+LN H0 plugin below is corrected to 3.4766.** Normal+LN H0 (4.53) has **not** been re-verified with the same A/B and is left as-is — do not assume it's equally stale without checking (see [[concept_model_zscore_bayes_hl]] for full writeup; 小o review flagged that the rest of this table — post. mean columns, H1–H4, Chiu z-score — was generated together with the old SEV plugin number and has the same unverified-staleness risk, not fixed in this pass).
-
-| Method | SEV+LN plugin | Normal+LN plugin | SEV+LN post. mean | Normal+LN post. mean |
-|--------|:-------------:|:----------------:|:-----------------:|:--------------------:|
-| Sample z-score (Chiu-style) | 10.93 | 10.61 | 14.44 | 14.62 |
-| **Model z-score (this work)** | **3.4766** (corrected 2026-08-19; was 4.32, stale 0.85-era value) | **4.53** ⚠️ unverified | **5.29** ⚠️ unverified | **5.70** ⚠️ unverified |
-| Improvement (plugin) | recompute vs. corrected baseline | — | — | — |
-
-### 5.6 HL Heuristic Search Results (y-ASSE plugin)
-
-| Heuristic | SEV+LN | Normal+LN | Notes |
-|-----------|:------:|:---------:|-------|
-| **H0: model z-score + Phi(z)** | **3.4766** (corrected 2026-08-19; was 4.32) | **4.53** ⚠️ unverified | **Best overall** (SEV+LN lowest) |
-| H1: exact marginal CDF | 10.38 ⚠️ unverified | 8.55 ⚠️ unverified | Counterintuitively worse |
-| H2: Cornish-Fisher skewness correction | 6.21 ⚠️ unverified | 4.53 ⚠️ unverified | Ties H0 for Normal (zero skewness → no-op) |
-| H3: per-group z calibration | 10.93 ⚠️ unverified | 10.61 ⚠️ unverified | Worst |
-| H4: DA posterior E[Delta_i|data] | 5.80 ⚠️ unverified | 7.75 ⚠️ unverified | Moderate |
-
-**Key finding:** H1 (exact marginal CDF) performs worse than H0 (Normal approximation $\Phi(z)$) for **both** SEV+LN and Normal+LN. The implicit shrinkage of $\Phi(z)$ for extreme z-values acts as useful regularization with the finite sample n=75. This is a classic **bias-variance tradeoff**: a "more correct" method need not perform better in finite samples. Note this reverses an earlier (bug-contaminated) reading where Normal+LN appeared to beat SEV+LN overall (3.53 vs 4.32) — with the Normal likelihood bug fixed, **SEV+LN H0 is the best combination** (now confirmed 3.4766, not 4.32 — see 2026-08-19 note above), with Normal+LN H0 (4.53, unverified) a close second. ⚠️ **2026-08-19: only the SEV+LN H0 cell above has been re-verified against the current `target_accept=0.95` setting** (see §5.5 note). H1/H2/H3/H4 and the Normal+LN column were generated in the same stale run as the old SEV H0=4.32 and have not been individually re-run — [[concept_model_zscore_bayes_hl]] already has corrected H0–H4 numbers from `rfl_hl_asse.py`'s 2026-08-18 rerun (SEV: H0=3.4766, H1=12.5922, H2=5.4410, H3=11.0585, H4=8.0914; NOR: H0=3.6156, H1=11.7083, H2=3.6156, H3=8.5414, H4=13.6081) — this table should eventually be replaced with those, but that resync wasn't done here to avoid conflating it with this specific H0-provenance investigation.
+> The debugging history that led here (Normal-likelihood bug fix, the 2026-08-12 divergence investigation, the H2/H4 precision fixes, the 2026-08-19 `target_accept` provenance A/B) is preserved in [[concept_model_zscore_bayes_hl]] and [[concept_delegation_override]] in the roy_km wiki, not duplicated here.
 
 ### 5.7 Full-Sample ASSE (n=75, no synthetic censoring) — `rfl_asse_full_sample.py`
 
 > [!warning] Provisional — sampler has **not converged**, numbers below are the best available, not a validated result
 >
-> **Why this table exists.** Everything in §5.5/§5.6 above computes ASSE over 73 "failures" only — the 2 tied-max observations at $S=0.675$ (both 11748.1 cycles) are treated as synthetically right-censored. But §3.4/§6.1 note the original P&M(1999) dataset has **no real censoring** — all 75 observations are complete failures; the censoring here is a synthetic test case this repo added, not part of the original problem. `rfl_asse_full_sample.py` (new, 2026-08-19) recomputes ASSE the same "model z-score" way (§5.5's method) but over the genuine full 75-observation sample with **no synthetic censoring at all**, superseding `rfl_model_zscore_asse.py`, `rfl_hl_asse.py`, and `rfl_bayes_asse.py` (the DA/NCP latent-$z_\Delta$-posterior approach in the last of these was rejected as in-sample circular reconstruction — it uses each $y_i$'s own value, via the joint likelihood, to infer that same observation's $\Delta_i$, then reconstructs $\hat y_i$ from it and compares back to $y_i$).
+> **Why this table exists.** The now-removed §5.5/§5.6 tables computed ASSE over 73 "failures" only — the 2 tied-max observations at $S=0.675$ (both 11748.1 cycles) were treated as synthetically right-censored. But §3.4/§6.1 note the original P&M(1999) dataset has **no real censoring** — all 75 observations are complete failures; the censoring here is a synthetic test case this repo added, not part of the original problem. `rfl_asse_full_sample.py` (new, 2026-08-19) recomputes ASSE the same "model z-score" way (θ̂ plug-in, percentile → $\hat\Delta_i$ → $\hat y_i$) but over the genuine full 75-observation sample with **no synthetic censoring at all**, superseding `rfl_model_zscore_asse.py`, `rfl_hl_asse.py`, and `rfl_bayes_asse.py` (the DA/NCP latent-$z_\Delta$-posterior approach in the last of these was rejected as in-sample circular reconstruction — it uses each $y_i$'s own value, via the joint likelihood, to infer that same observation's $\Delta_i$, then reconstructs $\hat y_i$ from it and compares back to $y_i$).
 >
 > **Two real bugs found and fixed in the process** (independent code review, `codex exec`, delegation-marked): (1) the 32-point Gauss-Legendre quadrature used to compute $E(Y\mid S_j)/V(Y\mid S_j)$ had up to ~2.8% error in the $P(\Delta<S_j)$ normalization (some stress levels came out **above 1**, which is impossible for a probability) — fixed by computing that normalization analytically ($\Phi((\ln S_j-\mu_\Delta)/\sigma_\Delta)$, exact since $\Delta$ is LogNormal) instead of via the quadrature sum, and raising an error if the quadrature-based and analytic values disagree by more than 1%. (2) The SEV branch's hand-written likelihood used `pt.clip(z_f, -500, 20)` — once a residual's $z$-score exceeded the clip ceiling, the likelihood's exponential term stopped changing but the linear term kept growing, giving the **wrong** log-density and gradient direction beyond that point, not just numerical protection. Fixed by switching to PyMC's built-in `pm.Gumbel` (max-type) with the standard sign-flip trick for the min-type SEV/Gumbel we need ($Y\sim\text{SEV}(\mu,\sigma) \Leftrightarrow -Y\sim\text{Gumbel}_\max(-\mu,\sigma)$), which needs no manual clipping.
 >
@@ -478,7 +450,7 @@ The SD at low stress (S=0.675) is **2.5x** that at high stress (S=0.9), revealin
 | Rhat_max | 1.18 | 1.14 |
 | ESS_min | 16.0 | 20.0 |
 
-Not directly comparable to the 73-observation §5.5 numbers (different sample, and those haven't been re-verified as unconverged/converged either) — this table exists to answer "what's the full-sample ASSE" honestly, not to declare a new best method.
+This table exists to answer "what's the full-sample ASSE" honestly, not to declare a new best method.
 
 ---
 
@@ -508,7 +480,12 @@ Not directly comparable to the 73-observation §5.5 numbers (different sample, a
 | SEV+INLA z-score (MLE parameters) | 11.50 | −6.5% | `rfl_asse_zscore.py` |
 | Burr+INLA z-score | 11.92 | −10.4% | `rfl_asse_zscore.py` |
 
-#### ln-lifetime Space (y-ASSE, in-sample plugin)
+#### ln-lifetime Space (y-ASSE)
+
+> **2026-08-19: this table was cleaned up** — removed after Roy's review flagged the whole section as stale/misleading:
+> - **`Bayes DA Plugin (SEV+Euler)` row removed.** This was `rfl_bayes_asse.py`'s DA/NCP latent-$z_\Delta$-posterior method — Roy identified it as in-sample circular reconstruction (uses each $y_i$'s own value, via the joint likelihood, to infer that observation's $\Delta_i$, then reconstructs $\hat y_i$ from it and compares back to $y_i$) and rejected it outright, not just as "needs a caveat." `rfl_bayes_asse.py` itself is superseded by `rfl_asse_full_sample.py` and pending removal from the repo.
+> - **`SEV/Normal sample z-score` and both `Model z-score (H0)` rows removed** — all four sourced from `rfl_model_zscore_asse.py`, which only ever computed over the stale 73-observation synthetic-censoring subset and is itself superseded by `rfl_asse_full_sample.py`. The current model z-score numbers are in §5.7 (full n=75 sample, **not converged**, see the warning there) — this table doesn't restate them so there is exactly one place to look, not two that can drift out of sync again.
+> - Burr+EM-GMM / Burr+INLA / SEV+INLA(MLE) rows below are a **separate, unrelated research thread** (NPMLE/semi-parametric $g(\Delta)$, not the DA+NCP MCMC family this README otherwise covers) and are not implicated in the above — kept as historical reference.
 
 | Method | y-ASSE | Model | Source |
 |--------|:------:|-------|--------|
@@ -516,11 +493,8 @@ Not directly comparable to the 73-observation §5.5 numbers (different sample, a
 | Burr+EM-GMM (sigma>=0.15, a>=1) Mode A | 4.09 | SEV | `rfl_burr_em.py` |
 | Burr+INLA | 5.74 | SEV | `rfl_burr_inla.py` |
 | SEV+INLA (MLE in-sample) | 5.76 | SEV | `rfl_profile.py` |
-| **Bayes DA Plugin (SEV+Euler)** | **5.75** | SEV | `rfl_bayes_asse.py` |
-| SEV sample z-score | 10.93 | SEV | `rfl_model_zscore_asse.py` |
-| Normal sample z-score | 10.61 | Normal | `rfl_model_zscore_asse.py` |
-| **Model z-score (SEV, H0)** | **3.4766** (corrected 2026-08-19; was 4.32, stale `target_accept=0.85`-era value — see §5.5) | SEV | `rfl_model_zscore_asse.py` |
-| **Model z-score (Normal, H0)** | **4.53** ⚠️ unverified against current settings | Normal | `rfl_model_zscore_asse.py` |
+
+**Current DA+NCP model z-score full-sample (n=75) numbers: see §5.7** — SEV=4.7503, Normal=4.4573, both explicitly **not converged** (Rhat_max 1.18/1.14).
 
 #### Rank Space (P&M 1999 criterion, E)
 
@@ -577,9 +551,15 @@ The true marginal has heavier tails than Normal, causing extreme z-values to map
 | File | Function | Priority |
 |------|----------|:--------:|
 | `rfl_pymc_da.py` | **Main inference:** DA+NCP+NUTS (SEV+LN and Normal+LN models) | ⭐⭐⭐ |
-| `rfl_model_zscore_asse.py` | **Model z-score ASSE:** complete implementation and validation of Roy's new method | ⭐⭐⭐ |
-| `rfl_hl_asse.py` | **HL search:** systematic comparison of H0–H4 heuristics | ⭐⭐⭐ |
-| `rfl_bayes_asse.py` | Posterior y-ASSE direct computation (Euler-corrected) | ⭐⭐ |
+| `rfl_asse_full_sample.py` | **Model z-score ASSE (current):** full n=75 sample, no synthetic censoring, θ̂ plug-in percentile method, HL candidate search over `target_accept` — see §5.7 | ⭐⭐⭐ |
+
+### Superseded (2026-08-19, pending removal — see `todo.md`)
+
+| File | Superseded by | Why |
+|------|----------------|-----|
+| `rfl_model_zscore_asse.py` | `rfl_asse_full_sample.py` | Same method, but only computed over the stale 73-observation synthetic-censoring subset |
+| `rfl_hl_asse.py` | `rfl_asse_full_sample.py` | H0 (the winning heuristic) is now `rfl_asse_full_sample.py`; H1–H4's conclusions (H0 best) were already reached on the old data |
+| `rfl_bayes_asse.py` | `rfl_asse_full_sample.py` | Its DA/NCP latent-$z_\Delta$-posterior ASSE method is in-sample circular reconstruction (uses $y_i$ to infer $\Delta_i$, then compares the reconstruction back to $y_i$) — rejected, not just superseded on data scope
 
 ### Auxiliary Code (Development)
 
@@ -611,32 +591,15 @@ python rfl_pymc_da.py
 
 Output: posterior samples, Rhat, ESS, LOO-ELPD, and posterior mean ASSE.
 
-### Model Z-Score Validation (approx. 7–10 minutes)
+### Full-Sample Model Z-Score ASSE (approx. 20–30 minutes — runs an HL candidate search, 4 NUTS fits per error model)
 
 ```bash
-# Compute E(lnY|S), V(lnY|S) per stress level; compare model z-score vs. sample z-score
-python rfl_model_zscore_asse.py
+# Full n=75 sample, no synthetic censoring, theta_hat plug-in percentile method,
+# HL loop searches target_accept in {0.85,0.90,0.95,0.99} and keeps the best-Rhat candidate
+python rfl_asse_full_sample.py
 ```
 
-Output: heteroscedasticity table, y-ASSE comparison (model vs. sample z-score, SEV vs. Normal).
-
-### HL Heuristic Search (approx. 15–20 minutes)
-
-```bash
-# Systematic search over five heuristics H0-H4
-python rfl_hl_asse.py
-```
-
-Output: y-ASSE for H0–H4 (SEV and Normal); confirmation of the best heuristic.
-
-### Posterior ASSE Computation (approx. 3–5 minutes)
-
-```bash
-# Compute ASSE for each posterior draw; output posterior distribution statistics
-python rfl_bayes_asse.py
-```
-
-Output: posterior mean ASSE = 13.83, median = 13.13, 95% CI = [6.13, 24.58].
+Output: per-candidate convergence diagnostics, chosen $\hat\theta$ for SEV and Normal, full-sample ASSE. **Neither branch currently converges** (see §5.7) — this is documented, expected behavior pending the `Δ<S` reparameterization fix tracked in `todo.md`, not a bug in this script.
 
 ---
 
