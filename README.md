@@ -419,24 +419,26 @@ The SD at low stress (S=0.675) is **2.5x** that at high stress (S=0.9), revealin
 > The "environment changed (`g++` unavailable)" explanation for why `rfl_pymc_da.py` no longer reproduces its own "0 divergences" claim is **plausible but unconfirmed** — it only shows a compilation path is currently missing, not that this caused the historical change. Checking the original run's package versions (PyMC/PyTensor/NumPy/BLAS/Python) and PyTensor's compile mode would be needed to actually confirm this.
 >
 > **What was tried:** raising `target_accept` from 0.85 (2214 divergences) to 0.90/0.95/0.99 gives 1638/932/388 — a real reduction, not a fix, and at 0.99 all 4 chains hit `max_treedepth` (this shows step-size sensitivity, not proof the geometry problem is step-size-independent — a subtly different claim than originally stated here). The standard fix for a persistent-but-shrinking divergence pattern — reparameterization (targeting the truncation/soft-constraint mismatch above, or a partial/hybrid NCP) — is genuine additional modeling work; Roy's 2026-08-12 decision was to document this rather than implement it in this pass. **`target_accept` default raised from 0.85 to 0.95** across all three scripts (all model branches, not just the diagnosed SEV+LogNormal one — a deliberate defensive default, not a per-branch evidence-based tuning) as a practical mitigation (932 divergences at $n=8000$ post-tuning draws, down from 2214) — **this reduces, it does not validate**: R-hat/ESS looking clean at 0.95 does not by itself guarantee an unbiased posterior while divergences remain. ASSE numbers below remain **provisional**.
+>
+> **2026-08-19 update (todo.md follow-up):** the `target_accept: 0.85 → 0.95` change above was applied to the scripts, but the **SEV+LN H0 plugin number in the table below was never re-run** — it silently stayed at the stale 0.85-era value. Confirmed by direct A/B (same code/seed/initvals, only `target_accept` toggled): `0.85` reproduces `4.3187` (rounds to the old `4.32`) with `2214` divergences (exact match to the historical count); `0.95` reproduces `3.4766000503458594` with `932` divergences — matching `rfl_hl_asse.py`'s independent 2026-08-18 rerun to ~7 decimal places. **SEV+LN H0 plugin below is corrected to 3.4766.** Normal+LN H0 (4.53) has **not** been re-verified with the same A/B and is left as-is — do not assume it's equally stale without checking (see [[concept_model_zscore_bayes_hl]] for full writeup; 小o review flagged that the rest of this table — post. mean columns, H1–H4, Chiu z-score — was generated together with the old SEV plugin number and has the same unverified-staleness risk, not fixed in this pass).
 
 | Method | SEV+LN plugin | Normal+LN plugin | SEV+LN post. mean | Normal+LN post. mean |
 |--------|:-------------:|:----------------:|:-----------------:|:--------------------:|
 | Sample z-score (Chiu-style) | 10.93 | 10.61 | 14.44 | 14.62 |
-| **Model z-score (this work)** | **4.32** | **4.53** | **5.29** | **5.70** |
-| Improvement (plugin) | **60.5%** | **57.3%** | — | — |
+| **Model z-score (this work)** | **3.4766** (corrected 2026-08-19; was 4.32, stale 0.85-era value) | **4.53** ⚠️ unverified | **5.29** ⚠️ unverified | **5.70** ⚠️ unverified |
+| Improvement (plugin) | recompute vs. corrected baseline | — | — | — |
 
 ### 5.6 HL Heuristic Search Results (y-ASSE plugin)
 
 | Heuristic | SEV+LN | Normal+LN | Notes |
 |-----------|:------:|:---------:|-------|
-| **H0: model z-score + Phi(z)** | **4.32** | **4.53** | **Best overall** (SEV+LN lowest) |
-| H1: exact marginal CDF | 10.38 | 8.55 | Counterintuitively worse |
-| H2: Cornish-Fisher skewness correction | 6.21 | 4.53 | Ties H0 for Normal (zero skewness → no-op) |
-| H3: per-group z calibration | 10.93 | 10.61 | Worst |
-| H4: DA posterior E[Delta_i|data] | 5.80 | 7.75 | Moderate |
+| **H0: model z-score + Phi(z)** | **3.4766** (corrected 2026-08-19; was 4.32) | **4.53** ⚠️ unverified | **Best overall** (SEV+LN lowest) |
+| H1: exact marginal CDF | 10.38 ⚠️ unverified | 8.55 ⚠️ unverified | Counterintuitively worse |
+| H2: Cornish-Fisher skewness correction | 6.21 ⚠️ unverified | 4.53 ⚠️ unverified | Ties H0 for Normal (zero skewness → no-op) |
+| H3: per-group z calibration | 10.93 ⚠️ unverified | 10.61 ⚠️ unverified | Worst |
+| H4: DA posterior E[Delta_i|data] | 5.80 ⚠️ unverified | 7.75 ⚠️ unverified | Moderate |
 
-**Key finding:** H1 (exact marginal CDF) performs worse than H0 (Normal approximation $\Phi(z)$) for **both** SEV+LN and Normal+LN. The implicit shrinkage of $\Phi(z)$ for extreme z-values acts as useful regularization with the finite sample n=75. This is a classic **bias-variance tradeoff**: a "more correct" method need not perform better in finite samples. Note this reverses an earlier (bug-contaminated) reading where Normal+LN appeared to beat SEV+LN overall (3.53 vs 4.32) — with the Normal likelihood bug fixed, **SEV+LN H0 (4.32) is now the best combination**, with Normal+LN H0 (4.53) a close second.
+**Key finding:** H1 (exact marginal CDF) performs worse than H0 (Normal approximation $\Phi(z)$) for **both** SEV+LN and Normal+LN. The implicit shrinkage of $\Phi(z)$ for extreme z-values acts as useful regularization with the finite sample n=75. This is a classic **bias-variance tradeoff**: a "more correct" method need not perform better in finite samples. Note this reverses an earlier (bug-contaminated) reading where Normal+LN appeared to beat SEV+LN overall (3.53 vs 4.32) — with the Normal likelihood bug fixed, **SEV+LN H0 is the best combination** (now confirmed 3.4766, not 4.32 — see 2026-08-19 note above), with Normal+LN H0 (4.53, unverified) a close second. ⚠️ **2026-08-19: only the SEV+LN H0 cell above has been re-verified against the current `target_accept=0.95` setting** (see §5.5 note). H1/H2/H3/H4 and the Normal+LN column were generated in the same stale run as the old SEV H0=4.32 and have not been individually re-run — [[concept_model_zscore_bayes_hl]] already has corrected H0–H4 numbers from `rfl_hl_asse.py`'s 2026-08-18 rerun (SEV: H0=3.4766, H1=12.5922, H2=5.4410, H3=11.0585, H4=8.0914; NOR: H0=3.6156, H1=11.7083, H2=3.6156, H3=8.5414, H4=13.6081) — this table should eventually be replaced with those, but that resync wasn't done here to avoid conflating it with this specific H0-provenance investigation.
 
 ---
 
@@ -477,8 +479,8 @@ The SD at low stress (S=0.675) is **2.5x** that at high stress (S=0.9), revealin
 | **Bayes DA Plugin (SEV+Euler)** | **5.75** | SEV | `rfl_bayes_asse.py` |
 | SEV sample z-score | 10.93 | SEV | `rfl_model_zscore_asse.py` |
 | Normal sample z-score | 10.61 | Normal | `rfl_model_zscore_asse.py` |
-| **Model z-score (SEV, H0)** | **4.32** | SEV | `rfl_model_zscore_asse.py` |
-| **Model z-score (Normal, H0)** | **4.53** | Normal | `rfl_model_zscore_asse.py` |
+| **Model z-score (SEV, H0)** | **3.4766** (corrected 2026-08-19; was 4.32, stale `target_accept=0.85`-era value — see §5.5) | SEV | `rfl_model_zscore_asse.py` |
+| **Model z-score (Normal, H0)** | **4.53** ⚠️ unverified against current settings | Normal | `rfl_model_zscore_asse.py` |
 
 #### Rank Space (P&M 1999 criterion, E)
 
