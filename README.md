@@ -440,6 +440,46 @@ The SD at low stress (S=0.675) is **2.5x** that at high stress (S=0.9), revealin
 
 **Key finding:** H1 (exact marginal CDF) performs worse than H0 (Normal approximation $\Phi(z)$) for **both** SEV+LN and Normal+LN. The implicit shrinkage of $\Phi(z)$ for extreme z-values acts as useful regularization with the finite sample n=75. This is a classic **bias-variance tradeoff**: a "more correct" method need not perform better in finite samples. Note this reverses an earlier (bug-contaminated) reading where Normal+LN appeared to beat SEV+LN overall (3.53 vs 4.32) — with the Normal likelihood bug fixed, **SEV+LN H0 is the best combination** (now confirmed 3.4766, not 4.32 — see 2026-08-19 note above), with Normal+LN H0 (4.53, unverified) a close second. ⚠️ **2026-08-19: only the SEV+LN H0 cell above has been re-verified against the current `target_accept=0.95` setting** (see §5.5 note). H1/H2/H3/H4 and the Normal+LN column were generated in the same stale run as the old SEV H0=4.32 and have not been individually re-run — [[concept_model_zscore_bayes_hl]] already has corrected H0–H4 numbers from `rfl_hl_asse.py`'s 2026-08-18 rerun (SEV: H0=3.4766, H1=12.5922, H2=5.4410, H3=11.0585, H4=8.0914; NOR: H0=3.6156, H1=11.7083, H2=3.6156, H3=8.5414, H4=13.6081) — this table should eventually be replaced with those, but that resync wasn't done here to avoid conflating it with this specific H0-provenance investigation.
 
+### 5.7 Full-Sample ASSE (n=75, no synthetic censoring) — `rfl_asse_full_sample.py`
+
+> [!warning] Provisional — sampler has **not converged**, numbers below are the best available, not a validated result
+>
+> **Why this table exists.** Everything in §5.5/§5.6 above computes ASSE over 73 "failures" only — the 2 tied-max observations at $S=0.675$ (both 11748.1 cycles) are treated as synthetically right-censored. But §3.4/§6.1 note the original P&M(1999) dataset has **no real censoring** — all 75 observations are complete failures; the censoring here is a synthetic test case this repo added, not part of the original problem. `rfl_asse_full_sample.py` (new, 2026-08-19) recomputes ASSE the same "model z-score" way (§5.5's method) but over the genuine full 75-observation sample with **no synthetic censoring at all**, superseding `rfl_model_zscore_asse.py`, `rfl_hl_asse.py`, and `rfl_bayes_asse.py` (the DA/NCP latent-$z_\Delta$-posterior approach in the last of these was rejected as in-sample circular reconstruction — it uses each $y_i$'s own value, via the joint likelihood, to infer that same observation's $\Delta_i$, then reconstructs $\hat y_i$ from it and compares back to $y_i$).
+>
+> **Two real bugs found and fixed in the process** (independent code review, `codex exec`, delegation-marked): (1) the 32-point Gauss-Legendre quadrature used to compute $E(Y\mid S_j)/V(Y\mid S_j)$ had up to ~2.8% error in the $P(\Delta<S_j)$ normalization (some stress levels came out **above 1**, which is impossible for a probability) — fixed by computing that normalization analytically ($\Phi((\ln S_j-\mu_\Delta)/\sigma_\Delta)$, exact since $\Delta$ is LogNormal) instead of via the quadrature sum, and raising an error if the quadrature-based and analytic values disagree by more than 1%. (2) The SEV branch's hand-written likelihood used `pt.clip(z_f, -500, 20)` — once a residual's $z$-score exceeded the clip ceiling, the likelihood's exponential term stopped changing but the linear term kept growing, giving the **wrong** log-density and gradient direction beyond that point, not just numerical protection. Fixed by switching to PyMC's built-in `pm.Gumbel` (max-type) with the standard sign-flip trick for the min-type SEV/Gumbel we need ($Y\sim\text{SEV}(\mu,\sigma) \Leftrightarrow -Y\sim\text{Gumbel}_\max(-\mu,\sigma)$), which needs no manual clipping.
+>
+> **A real, unfixed problem: the `Δ<S` support is still a soft floor, not a hard constraint.** `pt.maximum(S_OBS-delta, 1e-8)` lets $\Delta_i \geq S_i$ samples get a finite (clipped) likelihood instead of being properly excluded from the model's support, creating a kink/flat-gradient region right where the sampler needs to be well-behaved. This is a **pre-existing pattern throughout this repo** (`rfl_bayes_asse.py`, `rfl_pymc_da.py`, etc.), not something new in this file — but it appears to be the actual root cause of this model's persistent divergence problems (see next paragraph), and the correct fix is a genuine reparameterization, not another patch. **Not fixed in this pass** — tracked in `todo.md`.
+>
+> **HL-loop candidate search (2026-08-19): 8 independent NUTS fits, none converged — and the pattern rules out "just tune harder."** Following [[concept_heuristic_learning]]'s policy-search pattern (state=convergence diagnostics, policy=named candidate configs, feedback=diagnostics per candidate, loop=run all candidates then pick the best — not a single escalating chain, which was tried first and made things *monotonically worse* round over round: divergences went 3165→3108→4973→7116 as `target_accept`/`tune`/`draws` all increased together), `target_accept` ∈ {0.85, 0.90, 0.95, 0.99} was swept independently (draws=tune=2000 fixed) for both SEV and Normal:
+>
+> | SEV target_accept | divergences | Rhat_max | ESS_min |
+> |:-:|:-:|:-:|:-:|
+> | 0.85 | 3165 | 1.18 | 16.0 |
+> | 0.90 | 3262 | 1.19 | 15.0 |
+> | 0.95 | 696 | 1.53 | 7.0 |
+> | 0.99 | **0** | **1.50** | 7.0 |
+>
+> | Normal target_accept | divergences | Rhat_max | ESS_min |
+> |:-:|:-:|:-:|:-:|
+> | 0.85 | 1442 | 1.15 | 20.0 |
+> | 0.90 | 1791 | 1.23 | 30.0 |
+> | 0.95 | 859 | 1.14 | 20.0 |
+> | 0.99 | 51 | 1.58 | 7.0 |
+>
+> SEV at `target_accept=0.99` hit **zero divergences** — and still has Rhat=1.50, because all 4 chains exhausted `max_treedepth`: the sampler took safely tiny steps and never actually traversed/mixed across the posterior. Zero divergences with terrible Rhat is the textbook signature of a geometry problem HMC/NUTS step-size tuning cannot fix — consistent with the un-fixed `Δ<S` soft-floor being the real blocker, not sampler configuration.
+>
+> **Result: neither branch converged by standard diagnostics (Rhat<1.05, ESS>200, divergences<50).** Per Roy's 2026-08-19 decision, the numbers below are recorded as the current best-effort (lowest Rhat_max among the 4 candidates each), explicitly **not validated**, pending the reparameterization fix (tracked in `todo.md`).
+
+| | SEV (target_accept=0.85) | Normal (target_accept=0.95) |
+|---|:-:|:-:|
+| $\hat\theta$ | $\beta_0=$-9.3723, $\beta_1=$-9.5951, $\sigma=$0.1893, $\mu_\Delta=$-0.7204, $\sigma_\Delta=$0.0407 | $\beta_0=$-9.4315, $\beta_1=$-10.1187, $\sigma=$0.2219, $\mu_\Delta=$-0.7686, $\sigma_\Delta=$0.0453 |
+| **Full-sample (n=75) ASSE** | **4.7503** | **4.4573** |
+| Divergences | 3165 | 859 |
+| Rhat_max | 1.18 | 1.14 |
+| ESS_min | 16.0 | 20.0 |
+
+Not directly comparable to the 73-observation §5.5 numbers (different sample, and those haven't been re-verified as unconverged/converged either) — this table exists to answer "what's the full-sample ASSE" honestly, not to declare a new best method.
+
 ---
 
 ## 6. Comparison with Prior Work
