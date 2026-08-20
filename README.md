@@ -1,9 +1,8 @@
-# Full Bayesian RFL Model: Model Z-Score Prediction with Heuristic Learning (State → Strategy → Feedback) Pipeline Selection
+# Full Bayesian RFL Model: Model Z-Score Prediction
 
-> **Roy (2026-06-02)**
+> **Roy (2026-06-02, updated 2026-08-20)**
 > Full Bayesian Inference to improve individual lifetime prediction for the Random Fatigue Limit (RFL) model.
-> Proposes replacing sample statistics with model-theoretic moments (Model Z-Score),
-> and validates the optimal prediction pipeline via a three-stage Heuristic Learning framework (**State** posterior info → **Strategy** H0–H4 → **Feedback** −ASSE).
+> Proposes replacing sample statistics with model-theoretic moments (Model Z-Score): fix $\hat\theta$ from a full-sample fit, standardize each observation's residual against the model's marginal moments, and invert that percentile through $\Delta$'s LogNormal quantile function (see §3.2–§3.3 and §5.4's provenance note). Full n=75 sample, no synthetic censoring; **the sampler does not currently converge** (§5.4).
 
 ---
 
@@ -35,7 +34,7 @@
 | No-U-Turn Sampler→(NUTS) | Adaptive HMC algorithm (Hoffman & Gelman 2014) |
 | Hamiltonian Monte Carlo→(HMC) | Underlying algorithm of NUTS |
 | Markov Chain Monte Carlo→(MCMC) | General posterior sampling framework |
-| Heuristic Learning→(HL) | Systematic search for the optimal prediction pipeline |
+| Heuristic Learning→(HL) | Weng (2026)'s policy-search pattern (state→policy→feedback→loop); used here for NUTS sampler-configuration selection (§5.4), not for choosing among prediction pipelines |
 | LogNormal→(LN) | Log-normal distribution; the prior family for $\Delta_i$ |
 
 ### Prediction Error Metrics
@@ -168,7 +167,7 @@ Decoupling the prior from hyperparameters $(\mu_\Delta, \sigma_\Delta)$ flattens
 
 $$E(\ln N \mid S_j) = \hat{\beta}_0 - \hat{\sigma}\gamma_E + \hat{\beta}_1 \cdot \frac{\displaystyle\int_0^{S_j} \ln(S_j - \Delta) \cdot g(\Delta \mid \hat{\mu}_\Delta, \hat{\sigma}_\Delta) \thinspace d\Delta}{F_\Delta(S_j)}, \qquad F_\Delta(S_j) = \int_0^{S_j} g(\Delta \mid \hat{\mu}_\Delta, \hat{\sigma}_\Delta) \thinspace d\Delta$$
 
-where $\gamma_E = 0.5772$ (Euler-Mascheroni constant). $g(\Delta\mid\cdot)$ is the (untruncated) LogNormal density, so the raw integral over $[0,S_j]$ is not itself a conditional expectation — dividing by $F_\Delta(S_j)$ (the LogNormal CDF at $S_j$, i.e. $P(\Delta<S_j)$) is what makes this $E[\ln(S_j-\Delta)\mid\Delta<S_j]$. `_gl_moments()` in `rfl_model_zscore_asse.py` computes this correctly (the quadrature weight sum `norm` *is* the discretized $F_\Delta(S_j)$, and both `E1`/`E2` divide by it) — this formula previously omitted the denominator, which the code has always included (2026-08-13 fix, precision-only, does not change any reported number).
+where $\gamma_E = 0.5772$ (Euler-Mascheroni constant). $g(\Delta\mid\cdot)$ is the (untruncated) LogNormal density, so the raw integral over $[0,S_j]$ is not itself a conditional expectation — dividing by $F_\Delta(S_j)$ (the LogNormal CDF at $S_j$, i.e. $P(\Delta<S_j)$) is what makes this $E[\ln(S_j-\Delta)\mid\Delta<S_j]$. `gl_moments()` in `rfl_asse_full_sample.py` (originally `_gl_moments()` in the now-removed `rfl_model_zscore_asse.py`) computes this correctly (the quadrature weight sum `norm` *is* the discretized $F_\Delta(S_j)$, and both `E1`/`E2` divide by it) — this formula previously omitted the denominator, which the code has always included (2026-08-13 fix, precision-only, does not change any reported number).
 
 **Theoretical variance** (correctly separating two sources; $\text{Var}[\cdot]$ here means the same $\Delta<S_j$-conditional variance as above, i.e. computed from the same $F_\Delta(S_j)$-normalized moments):
 
@@ -186,39 +185,9 @@ $$V(\ln N \mid S_j) = \hat{\beta}_1^2 \cdot \underbrace{\text{Var}[\ln(S_j - \De
 
 ---
 
-### 3.3 Heuristic Learning (HL) Validation
+### 3.3 Prediction Pipeline (current)
 
-HL (Weng, 2026) decomposes the problem into three explicit stages to systematically search for the optimal prediction rule:
-
-**Stage 1 — State:** All information available after MCMC inference
-
-$$\text{State} = \Bigl\lbrace \hat{\theta}, \lbrace E(\ln N \mid S_j), \sqrt{V(\ln N \mid S_j)}\rbrace_{j=1}^5, \lbrace(y_{ij}, S_j)\rbrace \Bigr\rbrace$$
-
-- $\hat{\theta}$: posterior mean (MCMC output; 5 parameters, see Section 2.2)
-- Theoretical mean and SD per stress level: computed from $\hat{\theta}$ via GL integration
-- Observed data $\lbrace(y_{ij}, S_j)\rbrace$: used for final ASSE computation
-
-**Stage 2 — Strategy:** Given the State, choose a heuristic rule mapping $y_{ij}$ to $\hat{y}_{ij}$
-
-$$\text{Strategy}_k : \text{State} \times y_{ij} \longrightarrow \hat{y}_{ij} \qquad k \in \lbrace H0, H1, H2, H3, H4 \rbrace$$
-
-**Stage 3 — Feedback:** Evaluate strategy quality to drive selection
-
-$$\text{Reward}(k) = -\text{ASSE}(k) = -\sum_{i,j} |y_{ij} - \hat{y}_{ij}^{(k)}|$$
-
-HL enumerates the five candidate strategies H0–H4 and selects the one with maximum Reward.
-
-| Heuristic | Step 2 (percentile) | Steps 3–4 (Delta estimation) |
-|-----------|---------------------|------------------------------|
-| **H0 (model z-score)** | $\Phi(z)$ | LogNormal inverse CDF |
-| H1 | Exact marginal CDF (numerical integration) | Same |
-| H2 | Cornish-Fisher $\Phi(z + \gamma_1(z^2-1)/6)$ [^h2-skew] | Same |
-| H3 | Per-group z calibration (subtract group mean **and divide by group SD**, floored at 0.5) | Same |
-| H4 | — | DA posterior $E[\Delta_i \mid \mathbf{y}, \theta^{(s)}]$ [^h4-plugin] |
-
-[^h2-skew]: `marginal_skewness()` in `rfl_hl_asse.py` only computes the 3rd central moment of the *conditional mean* $\mu_c(\Delta) = \beta_0+\beta_1\ln(S_j-\Delta)-\sigma\gamma_E$ as $\Delta$ varies (the "between-$\Delta$" skewness contribution). It omits the SEV residual's own skewness (a fixed constant of the SEV/Gumbel-type family, independent of $\Delta$) — the "within-$\Delta$" contribution the law of total cumulants would also require. Because this model's residual conditional variance doesn't depend on $\Delta$, the cross term in the total-cumulant expansion vanishes, so a correct fix genuinely is just adding the two terms (between-$\Delta$ + within-$\Delta$), not a more complex re-derivation — 2026-08-13: documented as a known gap (precision-only pass, this project's scope, confirmed by 小o review); doing the addition is real modeling work that would change the reported H2 ASSE numbers below and hasn't been done.
-
-[^h4-plugin]: Despite the "$E[\Delta_i\mid\text{data}]$" name, `H4_da_posterior()` collapses $\mu_\Delta,\sigma_\Delta$ to their posterior **means** first, then transforms each draw's $z_{\Delta_i}$ through those fixed point estimates and averages — i.e. $\exp(\bar\mu_\Delta+\bar\sigma_\Delta z_{\Delta_i}^{(s)})$ averaged over $s$, not the proper per-draw transform-then-average $\frac{1}{S}\sum_s\exp(\mu_\Delta^{(s)}+\sigma_\Delta^{(s)}z_{\Delta_i}^{(s)})$. This is not simply Jensen's inequality (2026-08-13, corrected after 小o review) — $\exp(\cdot)$ being convex only gives $E[\exp(X)]\geq\exp(E[X])$, but the plug-in version also replaces $E[\sigma_\Delta z]$ with $E[\sigma_\Delta]E[z]$, discarding the posterior correlation between $\sigma_\Delta$ and $z_{\Delta_i}$; the accurate statement is that $\exp$'s nonlinearity combined with that joint-posterior correlation makes "average-then-transform" and "transform-then-average" generally non-commuting, with no fixed ordering between them. Documented as a known approximation; a properly-averaged H4 number would need the analysis re-run against retained posterior draws (this codebase doesn't currently persist `idata` to disk, so in practice that means a fresh NUTS sample) and hasn't been done in this pass.
+The percentile method (steps above) is the only prediction pipeline reported in this README. Earlier work compared it against several alternative constructions of $\hat\Delta_i$ (exact marginal CDF instead of the Normal approximation $\Phi(z)$, a skewness correction, per-group recalibration, a DA-posterior plug-in) — those comparisons, and the numbers behind them, were computed on the retired 73-observation synthetic-censoring pipeline and are not restated here; see `git log`, or the author's local `todo.md` (a task-tracking file kept outside this repo, not included here — not resolvable by GitHub readers) if that history is needed.
 
 ---
 
@@ -274,24 +243,27 @@ The true $y_i$ is unknown for censored observations. Two principled approaches e
 1. **Exclude censored observations:** Compute ASSE using only $\delta_i = 1$ failures (most common)
 2. **Conditional expectation imputation:** Substitute $E[\ln N \mid \ln N > c_i, \Delta_i, \theta]$ for $y_i$, incorporating censored observations into ASSE
 
-`rfl_bayes_asse.py` implements neither for its "[B] all-75-obs" variant (`compute_asse_posterior(..., only_fail=False)`): it computes `|Y_OBS - y_pred|` using `Y_OBS` for the censored rows too, which is the recorded **censoring threshold** (the tied-max runout value) rather than the true unobserved failure time or its imputed expectation — i.e. it treats the threshold as if it were the ground-truth outcome. This understates the true residual for a right-censored point whose real failure time is beyond the threshold. 2026-08-13: documented as a known simplification (precision-only pass); the "[A] failures-only" variant (approach 1 above, `only_fail=True`) is the one actually consistent with either documented approach and is what the headline y-ASSE numbers in this README use.
+`rfl_asse_full_sample.py`, the current script (§5.4), implements neither — it has no censored-observation handling at all, by design (§4: no trustworthy censoring metadata for this dataset). The now-removed `rfl_bayes_asse.py` (see §8) did implement approach 1 (excluding censored rows via an `only_fail` flag) for the synthetic-censoring test case described in §4's note; approach 2 (conditional expectation imputation) was never implemented anywhere in this repo. See `rfl_asse_full_sample.py`'s module docstring for a fuller write-up of the tradeoffs between the two approaches if real censored data is added later.
 
 ---
 
 ## 4. Data
 
-**Source:** Pascual & Meeker (1999) *Technometrics* — aluminum alloy (R.R. Moore rotating bending fatigue test)
+> **⚠️ 2026-08-20: source attribution below is now suspected wrong, not independently confirmed either way.** Review found that neither of P&M (1999)'s own two datasets (laminate panel, $n=125$ with 10 right-censored; nickel-base superalloy, $246\to115$ observations after trimming, 32 unique strain levels) matches this repo's 75-observation, 5-stress-level×15-replicate structure. What *does* match that structure is the **concrete-fatigue dataset** used in the authors' *Response* to discussants (§2.2, in `roy_km/_raw/pascual_meeker_1999_response.pdf` — the author's separate local knowledge-base repo, not included here and not resolvable by GitHub readers): "five stress levels with 15 measurements each." That is a structural match only — the actual numeric values here (102.95, 280.32, …, 11748.1 at $S=0.675$) have **not** been cross-checked against Castillo & Hadi (1995)'s original concrete data (not available in this repo), so this is not yet a confirmed re-attribution, just a strong reason to distrust the "aluminum alloy, R.R. Moore" label below. Tracked in `todo.md` pending that verification.
+
+**Source (as previously documented, credibility now in question — see callout above):** Pascual & Meeker (1999) *Technometrics* — aluminum alloy (R.R. Moore rotating bending fatigue test)
 
 | Data Characteristic | Value |
 |---------------------|-------|
 | Total observations | 75 |
-| Observed failures | 73 |
-| Censored (synthetic, see note) | 2 |
+| Failures per raw data (no censoring column) | 75 |
 | Stress levels | 5 (S = 0.675, 0.750, 0.825, 0.900, 0.950 ksi) |
 | Specimens per stress level | 15 |
 | Response variable | $\ln N$ (log number of cycles to failure) |
 
-> **Note (2026-08-11):** The original P&M (1999) dataset has no true censoring indicator — all 75 observations are complete failures. Every code path in this repo (`rfl_pymc_da.py` and all others) synthesizes 2 censored observations as a live test case for the [censored-data extension](#34-extension-to-censored-data): within each stress-level group, if the maximum value is tied (appears more than once), all copies of that tied maximum are flagged `event=0` (censored) instead of `event=1` (failure). Only the S=0.675 group has a tie (two specimens both at 11748.1 cycles), giving exactly 73 failures + 2 censored. This heuristic is fragile — any genuine failure value that happens to tie for the group maximum would also be mislabeled — but for this specific dataset it only affects those 2 points.
+Some (now-removed) scripts additionally applied a synthetic censoring label — see note below — splitting these into 73 "failures" + 2 "censored"; that split is an artifact of those scripts, not a property of the raw data.
+
+> **Note (2026-08-11, revised 2026-08-20):** This repo has no trustworthy censoring-indicator metadata for this dataset — the CSV/hardcoded arrays carry no source-verified `event`/censoring column (see the source-attribution warning above). `rfl_pymc_da.py` (and, historically, three now-removed scripts — `rfl_model_zscore_asse.py`, `rfl_hl_asse.py`, `rfl_bayes_asse.py`; see §8) synthesize 2 censored observations as a live test case for the [censored-data extension](#34-extension-to-censored-data): within each stress-level group, if the maximum value is tied (appears more than once), all copies of that tied maximum are flagged `event=0` (censored) instead of `event=1` (failure), giving 73 failures + 2 censored. **`rfl_asse_full_sample.py` does not do this** — it treats all 75 observations as exact failures (§5.4). This heuristic is fragile — any genuine failure value that happens to tie for the group maximum would also be mislabeled — but for this specific dataset it only affects those 2 points.
 
 ---
 
@@ -299,13 +271,13 @@ The true $y_i$ is unknown for censored observations. Two principled approaches e
 
 ### 5.1 MCMC Convergence (SEV + LogNormal, Best Model)
 
-> **⚠️ 2026-08-12 — "Divergences = 0" does not currently reproduce; see the full diagnostic in [[concept_model_zscore_bayes_hl]] (roy_km wiki, independently reviewed by 小o).** Re-running `rfl_pymc_da.py`'s exact SEV+LogNormal model (same code, same `initvals`, same `random_seed=[0,1,2,3]`) in the current environment gives **2214 divergences**, not 0 — confirmed **not** a script-specific error: all three RFL PyMC scripts (this one, `rfl_model_zscore_asse.py`, `rfl_hl_asse.py`) give the identical divergence count when run side-by-side today. Why the original "0" no longer reproduces is unconfirmed (a missing `g++`/different PyTensor compilation path is one plausible factor, not a verified cause).
+> **⚠️ 2026-08-12 — "Divergences = 0" does not currently reproduce; see the full diagnostic in [[concept_model_zscore_bayes_hl]] (Obsidian-style wikilink into the author's separate local `roy_km` knowledge base, not this repo — not resolvable by GitHub readers; independently reviewed by 小o).** Re-running `rfl_pymc_da.py`'s exact SEV+LogNormal model (same code, same `initvals`, same `random_seed=[0,1,2,3]`) in the current environment gives **2214 divergences**, not 0 — confirmed **not** a script-specific error: all three RFL PyMC scripts run that day (this one and the two now-removed scripts `rfl_model_zscore_asse.py`, `rfl_hl_asse.py`; see §8) gave the identical divergence count when run side-by-side. Why the original "0" no longer reproduces is unconfirmed (a missing `g++`/different PyTensor compilation path is one plausible factor, not a verified cause).
 
-| Metric | Value |
+| Metric | Value (⚠️ historical run, not reproducible in the current environment — see callout above) |
 |--------|-------|
 | Max $\hat{R}$ | 1.032 |
 | Min ESS | 117 |
-| Divergences | 0 (⚠️ not reproducible with current environment — see callout above) |
+| Divergences | 0 |
 | LOO-ELPD | −76.39 (better than Normal+LN = −79.38) |
 
 #### Metric Interpretation
@@ -321,7 +293,7 @@ $$\hat{R} = \sqrt{\frac{\text{between-chain var} + \text{within-chain var (weigh
 - $\hat{R} < 1.05$: lenient criterion; generally acceptable
 - $\hat{R} \geq 1.1$: insufficient convergence; extend sampling or redesign priors
 
-**This study: max $\hat{R}$ = 1.032** — slightly above the strict threshold but within acceptable range. The worst parameter is likely $\sigma_\Delta$ (true value ≈ 0.038, near-degenerate, harder to sample).
+**This study (historical, unreproducible run — see callout above): max $\hat{R}$ = 1.032** — would be within the lenient threshold if reproducible, but re-running the identical code/seed today gives 2214 divergences instead of 0, so this $\hat R$ shouldn't be read as a current, trustworthy convergence statement. The worst parameter is likely $\sigma_\Delta$ (true value ≈ 0.038, near-degenerate, harder to sample).
 
 ---
 
@@ -337,7 +309,7 @@ where $\rho_k$ is the lag-$k$ autocorrelation. Higher autocorrelation yields sma
 - ESS > 100: minimum acceptable threshold
 - ESS < 100: increase sampling count
 
-**This study: min ESS = 117** — barely above threshold, indicating moderate autocorrelation for some parameter (likely $\sigma_\Delta$). For more precise posterior quantiles, increase warm-up or sample count.
+**This study (historical, unreproducible run — see callout above): min ESS = 117** — barely above threshold, indicating moderate autocorrelation for some parameter (likely $\sigma_\Delta$). For more precise posterior quantiles, increase warm-up or sample count.
 
 ---
 
@@ -348,7 +320,7 @@ During HMC/NUTS numerical integration, if energy conservation is severely violat
 - Divergences = 0: HMC operating normally; flat posterior geometry
 - Divergences > 0: reduce step size (increase `target_accept`) or switch to NCP
 
-**This study: Divergences = 0 as originally reported, but not reproducible as of 2026-08-12** — see the callout at the top of §5.1 and the full diagnostic in [[concept_model_zscore_bayes_hl]] (roy_km wiki, independently reviewed by 小o, `codex exec`, delegation-marked). Confirmed: not a current script-to-script difference (`rfl_pymc_da.py` itself now gives the same 2214 divergences as the other two RFL scripts under identical settings). What's *not* confirmed: an initial mean-based comparison suggested divergent draws correlate with larger $\sigma_\Delta$ rather than proximity to the hard $S_j - \Delta_i$ boundary — 小o's review flagged real gaps in that comparison (autocorrelated draws treated as independent samples, mean instead of tail quantiles, a stored divergent draw being the trajectory endpoint rather than necessarily where integration failed), so this NCP/CP-regime story is a **hypothesis, not a finding**. A sharper, independently-flagged lead: the code's docstring claims a truncated LogNormal for $\Delta_i$, but the implementation is an *untruncated* LogNormal plus a `pt.maximum(...)` soft penalty in the likelihood — a real model/implementation mismatch that's a more likely direct source of difficult geometry, and the better starting point for future work. Raising `target_accept` from 0.85 (2214 divergences) through 0.90/0.95/0.99 (1638/932/388) reduces but does not eliminate them, and 0.99 introduces `max_treedepth` warnings on all 4 chains (step-size sensitivity, not proof of a step-size-independent problem). Reparameterization (targeting the truncation mismatch above) is real modeling work, not implemented here; Roy's 2026-08-12 decision was to document this and move on rather than implement it in this pass.
+**This study: Divergences = 0 as originally reported, but not reproducible as of 2026-08-12** — see the callout at the top of §5.1 and the full diagnostic in [[concept_model_zscore_bayes_hl]] (roy_km wiki, independently reviewed by 小o, `codex exec`, delegation-marked). Confirmed: not a script-to-script difference — in that 2026-08-12 re-run, `rfl_pymc_da.py` and the two other RFL scripts run that day (`rfl_model_zscore_asse.py`, `rfl_hl_asse.py`; both since removed, see §8) all gave the identical 2214-divergence count under identical settings. What's *not* confirmed: an initial mean-based comparison suggested divergent draws correlate with larger $\sigma_\Delta$ rather than proximity to the hard $S_j - \Delta_i$ boundary — 小o's review flagged real gaps in that comparison (autocorrelated draws treated as independent samples, mean instead of tail quantiles, a stored divergent draw being the trajectory endpoint rather than necessarily where integration failed), so this NCP/CP-regime story is a **hypothesis, not a finding**. A sharper, independently-flagged lead: the code's docstring claims a truncated LogNormal for $\Delta_i$, but the implementation is an *untruncated* LogNormal plus a `pt.maximum(...)` soft penalty in the likelihood — a real model/implementation mismatch that's a more likely direct source of difficult geometry, and the better starting point for future work. Raising `target_accept` from 0.85 (2214 divergences) through 0.90/0.95/0.99 (1638/932/388) reduces but does not eliminate them, and 0.99 introduces `max_treedepth` warnings on all 4 chains (step-size sensitivity, not proof of a step-size-independent problem). Reparameterization (targeting the truncation mismatch above) is real modeling work, not implemented here; Roy's 2026-08-12 decision was to document this and move on rather than implement it in this pass.
 
 ---
 
@@ -361,9 +333,11 @@ $$\text{LOO-ELPD} = \sum_{i=1}^{75} \log p(y_i \mid \mathbf{y}_{-i})$$
 - Larger values (closer to 0) indicate better predictive performance
 - A difference $\Delta\text{ELPD} > 2$ is generally considered meaningful
 
-**This study:** SEV+LN = −76.39, Normal+LN = −79.38, $\Delta = 2.99$. SEV's heavier-tailed behavior better captures fatigue life data.
+**This study (historical, unreproducible run — see callout above):** SEV+LN = −76.39, Normal+LN = −79.38, $\Delta = 2.99$. SEV's heavier-tailed behavior better captures fatigue life data.
 
 ### 5.2 Posterior Parameter Estimates (SEV + LogNormal)
+
+> ⚠️ Same historical, unreproducible run as §5.1 (see callout there) — not regenerated in this pass.
 
 | Parameter | Posterior Mean | Posterior SD | MLE Reference |
 |-----------|:--------------:|:------------:|:-------------:|
@@ -375,26 +349,9 @@ $$\text{LOO-ELPD} = \sum_{i=1}^{75} \log p(y_i \mid \mathbf{y}_{-i})$$
 
 > Posterior means nearly reproduce MLE — with n=75, Uniform priors are dominated by the likelihood, giving high agreement between Bayesian and frequentist results.
 
-### 5.3 Posterior ASSE Distribution (SEV + LogNormal, n=75)
+### 5.3 Heteroscedastic Structure Across Stress Levels
 
-| Statistic | Posterior Value |
-|-----------|:--------------:|
-| Posterior Mean ASSE | 13.83 |
-| Posterior Median ASSE | 13.13 |
-| 95% Posterior CI | [6.13, 24.58] |
-| Posterior SD | 4.87 |
-
-**Plugin ASSE** (evaluated at posterior mean $\hat{\theta}$):
-
-| Prediction Formula | ASSE |
-|--------------------|:----:|
-| SEV + Euler correction ($\hat{y} = \mu - \hat{\sigma}\gamma_E$) | **5.75** |
-| No correction ($\hat{y} = \mu$) | 10.19 |
-
-> Plugin y-ASSE = 5.75 nearly equals the in-sample ASSE of MLE SEV+INLA (5.76), confirming that the posterior mean correctly reproduces the MLE.
-> The posterior mean ASSE = 13.83 is higher because posterior uncertainty in $\sigma$ (SD = 0.07) degrades predictions for some draws — this is the "honest ASSE with full parameter uncertainty."
-
-### 5.4 Heteroscedastic Structure Across Stress Levels
+> ⚠️ Same historical, unreproducible run as §5.1 (see callout there) — not regenerated in this pass.
 
 | $S_j$ | $E(\ln Y \mid S_j)$ | SD (SEV) | SD (Normal) |
 |-------|:-------------------:|:--------:|:-----------:|
@@ -406,21 +363,19 @@ $$\text{LOO-ELPD} = \sum_{i=1}^{75} \log p(y_i \mid \mathbf{y}_{-i})$$
 
 The SD at low stress (S=0.675) is **2.5x** that at high stress (S=0.9), revealing a pronounced heteroscedastic structure. (SD (Normal) column corrected 2026-08-11 — both SEV and Normal columns now consistently tick back up at S=0.950.)
 
-### 5.5–5.6 Model Z-Score ASSE / HL Heuristic Search — superseded (2026-08-19)
-
-> **Removed 2026-08-19.** These two sections used to show `rfl_model_zscore_asse.py`/`rfl_hl_asse.py`'s ASSE tables, computed over the stale 73-observation synthetic-censoring subset. Both scripts are superseded by `rfl_asse_full_sample.py` (§5.7), which computes the same "model z-score" method Roy confirmed as correct, but over the genuine full 75-observation sample. Repeating the old numbers here (even with warning labels) risked them being read as current results, so they're gone rather than annotated — **current numbers live only in §5.7**.
->
-> The debugging history that led here (Normal-likelihood bug fix, the 2026-08-12 divergence investigation, the H2/H4 precision fixes, the 2026-08-19 `target_accept` provenance A/B) is preserved in [[concept_model_zscore_bayes_hl]] and [[concept_delegation_override]] in the roy_km wiki, not duplicated here.
-
-### 5.7 Full-Sample ASSE (n=75, no synthetic censoring) — `rfl_asse_full_sample.py`
+### 5.4 Full-Sample ASSE (n=75, no synthetic censoring) — `rfl_asse_full_sample.py`
 
 > [!warning] Provisional — sampler has **not converged**, numbers below are the best available, not a validated result
 >
-> **Why this table exists.** The now-removed §5.5/§5.6 tables computed ASSE over 73 "failures" only — the 2 tied-max observations at $S=0.675$ (both 11748.1 cycles) were treated as synthetically right-censored. But §3.4/§6.1 note the original P&M(1999) dataset has **no real censoring** — all 75 observations are complete failures; the censoring here is a synthetic test case this repo added, not part of the original problem. `rfl_asse_full_sample.py` (new, 2026-08-19) recomputes ASSE the same "model z-score" way (θ̂ plug-in, percentile → $\hat\Delta_i$ → $\hat y_i$) but over the genuine full 75-observation sample with **no synthetic censoring at all**, superseding `rfl_model_zscore_asse.py`, `rfl_hl_asse.py`, and `rfl_bayes_asse.py` (the DA/NCP latent-$z_\Delta$-posterior approach in the last of these was rejected as in-sample circular reconstruction — it uses each $y_i$'s own value, via the joint likelihood, to infer that same observation's $\Delta_i$, then reconstructs $\hat y_i$ from it and compares back to $y_i$).
+> **Why this table exists.** Earlier versions of this README computed ASSE over 73 "failures" only — the 2 tied-max observations at $S=0.675$ (both 11748.1 cycles) were treated as synthetically right-censored. §4 notes that no code path in this repo has a trustworthy record of genuine censoring metadata for this dataset — some earlier scripts synthesize 2 censored observations from the tied-max heuristic described there (`rfl_asse_full_sample.py` does not: it treats all 75 as exact). `rfl_asse_full_sample.py` (new, 2026-08-19) computes ASSE the "model z-score" way (θ̂ plug-in, percentile → $\hat\Delta_i$ → $\hat y_i$) over the full 75-observation sample with **no synthetic censoring at all**; the DA/NCP latent-$z_\Delta$-posterior reconstruction previously used elsewhere in this repo was rejected as in-sample circular reconstruction — it uses each $y_i$'s own value, via the joint likelihood, to infer that same observation's $\Delta_i$, then reconstructs $\hat y_i$ from it and compares back to $y_i$.
 >
-> **Two real bugs found and fixed in the process** (independent code review, `codex exec`, delegation-marked): (1) the 32-point Gauss-Legendre quadrature used to compute $E(Y\mid S_j)/V(Y\mid S_j)$ had up to ~2.8% error in the $P(\Delta<S_j)$ normalization (some stress levels came out **above 1**, which is impossible for a probability) — fixed by computing that normalization analytically ($\Phi((\ln S_j-\mu_\Delta)/\sigma_\Delta)$, exact since $\Delta$ is LogNormal) instead of via the quadrature sum, and raising an error if the quadrature-based and analytic values disagree by more than 1%. (2) The SEV branch's hand-written likelihood used `pt.clip(z_f, -500, 20)` — once a residual's $z$-score exceeded the clip ceiling, the likelihood's exponential term stopped changing but the linear term kept growing, giving the **wrong** log-density and gradient direction beyond that point, not just numerical protection. Fixed by switching to PyMC's built-in `pm.Gumbel` (max-type) with the standard sign-flip trick for the min-type SEV/Gumbel we need ($Y\sim\text{SEV}(\mu,\sigma) \Leftrightarrow -Y\sim\text{Gumbel}_\max(-\mu,\sigma)$), which needs no manual clipping.
+> **What in the percentile method is and isn't grounded in P&M (1999) — precisely scoped, not an argument invented for this repo, but also not a full endorsement.** Section 4.5 of the original paper ("Residual Analysis") defines, for a fixed ML estimate $\hat\theta$, the standardized residual $e_i^{*} = [\log(y_i) - \hat\mu(x_i)] / \hat\sigma(x_i)$, where $\hat\mu(x_i)$/$\hat\sigma(x_i)$ are the ML-estimated mean/SD of $\log$ life at that stress level **conditional on the specimen failing** (i.e., $\Delta<S$) — this is the same *form* as $E(Y\mid S_j)$/$\sqrt{V(Y\mid S_j)}$ in this repo's notation, and $e_i^*$ the same form as the $z_i$ used here, though not the same *values*: P&M plugs in the ML estimate $\hat\theta$, this repo plugs in a Bayesian posterior-mean $\hat\theta$ instead. P&M (1999) uses $e_i^*$ **only** to build residual-vs-stress diagnostic plots (Figs. 9/16 of the paper) — it never inverts $e_i^*$ back through $\Delta$'s distribution, never reconstructs $\hat y_i$ from it, and never sums it into a score. Section 4.4 is a **separate** procedure — an EDF/probability-integral-transform goodness-of-fit test using $z_i=F_W(w_i;x_i,\hat\theta)$ (the full marginal CDF, not the two-moment Normal approximation) — used only for a Kolmogorov–Smirnov test, not the same construction as §4.5's $e_i^*$ and not something this README should describe as "a sharper version" of it. So: **the standardized-residual formula ($z_i$) is P&M's own established technique; the further steps this repo adds on top of it — inverting $z_i$ through $\Delta$'s LogNormal quantile to get $\hat\Delta_i$, reconstructing $\hat y_i$, and summing $|y_i-\hat y_i|$ into an ASSE-style score — are this repo's own construction, not verified or endorsed by P&M (1999).** It is meaningfully different from the DA/NCP latent-posterior approach in one specific, checkable sense: it does not sample or compute each observation's conditional posterior $p(\Delta_i\mid y_i,\theta)$; it applies one fixed, global set of plug-in moments $(\hat\theta)$ to every observation and maps each residual to a quantile deterministically — see §7.2 for the precise (corrected) statement of this distinction.
 >
-> **A real, unfixed problem: the `Δ<S` support is still a soft floor, not a hard constraint.** `pt.maximum(S_OBS-delta, 1e-8)` lets $\Delta_i \geq S_i$ samples get a finite (clipped) likelihood instead of being properly excluded from the model's support, creating a kink/flat-gradient region right where the sampler needs to be well-behaved. This is a **pre-existing pattern throughout this repo** (`rfl_bayes_asse.py`, `rfl_pymc_da.py`, etc.), not something new in this file — but it appears to be the actual root cause of this model's persistent divergence problems (see next paragraph), and the correct fix is a genuine reparameterization, not another patch. **Not fixed in this pass** — tracked in `todo.md`.
+> The response to discussants (§2.2) computes a separate, summed absolute-error criterion, $E=\sum_j\sum_i|\log(y_{ij})-\log(\hat y_{ij})|$, benchmarking the RFL model against Castillo & Hadi (1995) and **five** other published S-N models (Little & Ekvall twice, Spindel & Haibach, Bastenaire, Castillo et al. 1985) — but there $\hat y_{ij}$ comes from inverting the model's marginal CDF at a **fixed rank-based plotting position** $p_i=(i-.5)/15$ (determined by $y_{ij}$'s rank among the 15 replicates at that stress level, not by its numeric magnitude, though the rank itself still comes from sorting the same observed data, and $\hat\theta$ is still fit on the full sample) — this is this README's "rank-ASSE" (§6.1), a related but distinct construction from the $z_i$-based percentile method used here, and it is also an in-sample construction by this README's own standard, not something exempted from the removals below. Whether the "sum standardized residuals into one score" convention this repo has historically attributed to Chiu (2005) actually originates there has **not** been independently verified in this pass — the P&M corpus read here doesn't confirm or deny it, and Chiu's original thesis wasn't re-checked.
+>
+> **Two real bugs found and fixed in the process** (independent code review, `codex exec`, delegation-marked): (1) the 32-point Gauss-Legendre quadrature's own weighted sum, used as the $P(\Delta<S_j)$ normalization, had up to ~2.8% error (some stress levels came out **above 1**, which is impossible for a probability). $N_\text{QUAD}$ was raised to 128 (validated convergent near the current posterior region), and — since $\Delta$ is LogNormal so $P(\Delta<S_j)=\Phi((\ln S_j-\mu_\Delta)/\sigma_\Delta)$ has a closed form — that analytic value is now computed alongside the quadrature sum purely as a **cross-check**: `gl_moments()` still divides the numerator ($E_1$, which has no closed form) by the quadrature-based sum, but raises an error if the two disagree by more than 1%, rather than silently returning a moment computed from a possibly-wrong normalization. (2) The SEV branch's hand-written likelihood used `pt.clip(z_f, -500, 20)` — once a residual's $z$-score exceeded the clip ceiling, the likelihood's exponential term stopped changing but the linear term kept growing, giving the **wrong** log-density and gradient direction beyond that point, not just numerical protection. Fixed by switching to PyMC's built-in `pm.Gumbel` (max-type) with the standard sign-flip trick for the min-type SEV/Gumbel we need ($Y\sim\text{SEV}(\mu,\sigma) \Leftrightarrow -Y\sim\text{Gumbel}_\max(-\mu,\sigma)$), which needs no manual clipping.
+>
+> **A real, unfixed problem: the `Δ<S` support is still a soft floor, not a hard constraint.** `pt.maximum(S_OBS-delta, 1e-8)` lets $\Delta_i \geq S_i$ samples get a finite (clipped) likelihood instead of being properly excluded from the model's support, creating a kink/flat-gradient region right where the sampler needs to be well-behaved. This is a **pre-existing pattern throughout this repo** (`rfl_pymc_da.py` and, historically, the now-removed `rfl_bayes_asse.py`), not something new in this file — but it appears to be the actual root cause of this model's persistent divergence problems (see next paragraph), and the correct fix is a genuine reparameterization, not another patch. **Not fixed in this pass** — tracked in `todo.md`.
 >
 > **HL-loop candidate search (2026-08-19): 8 independent NUTS fits, none converged — and the pattern rules out "just tune harder."** Following [[concept_heuristic_learning]]'s policy-search pattern (state=convergence diagnostics, policy=named candidate configs, feedback=diagnostics per candidate, loop=run all candidates then pick the best — not a single escalating chain, which was tried first and made things *monotonically worse* round over round: divergences went 3165→3108→4973→7116 as `target_accept`/`tune`/`draws` all increased together), `target_accept` ∈ {0.85, 0.90, 0.95, 0.99} was swept independently (draws=tune=2000 fixed) for both SEV and Normal:
 >
@@ -468,42 +423,7 @@ This table exists to answer "what's the full-sample ASSE" honestly, not to decla
 
 ### 6.2 ASSE Results Summary by Method
 
-#### z-score Space (z-ASSE)
-
-| Method | z-ASSE | Improvement vs. Chiu | Source |
-|--------|:------:|:--------------------:|--------|
-| Chiu (2005) EIV (thesis baseline) | **10.80** | — | Chiu (2005) thesis |
-| Roy Method A (MLE sample z-score) | 12.38 | −14.6% | `rfl_chiu.py` |
-| Roy Method B (Nelder-Mead optimization) | 10.38 | +3.9% | `rfl_chiu.py` |
-| Roy Method C-1 (OLS LAD z-score) | 11.02 | −2.0% | `rfl_chiu.py` |
-| **Roy Method C-2 (LAD regression)** | **9.94** | **+8.0%** | `rfl_chiu.py` |
-| SEV+INLA z-score (MLE parameters) | 11.50 | −6.5% | `rfl_asse_zscore.py` |
-| Burr+INLA z-score | 11.92 | −10.4% | `rfl_asse_zscore.py` |
-
-#### ln-lifetime Space (y-ASSE)
-
-> **2026-08-19: this table was cleaned up** — removed after Roy's review flagged the whole section as stale/misleading:
-> - **`Bayes DA Plugin (SEV+Euler)` row removed.** This was `rfl_bayes_asse.py`'s DA/NCP latent-$z_\Delta$-posterior method — Roy identified it as in-sample circular reconstruction (uses each $y_i$'s own value, via the joint likelihood, to infer that observation's $\Delta_i$, then reconstructs $\hat y_i$ from it and compares back to $y_i$) and rejected it outright, not just as "needs a caveat." `rfl_bayes_asse.py` itself is superseded by `rfl_asse_full_sample.py` and pending removal from the repo.
-> - **`SEV/Normal sample z-score` and both `Model z-score (H0)` rows removed** — all four sourced from `rfl_model_zscore_asse.py`, which only ever computed over the stale 73-observation synthetic-censoring subset and is itself superseded by `rfl_asse_full_sample.py`. The current model z-score numbers are in §5.7 (full n=75 sample, **not converged**, see the warning there) — this table doesn't restate them so there is exactly one place to look, not two that can drift out of sync again.
-> - Burr+EM-GMM / Burr+INLA / SEV+INLA(MLE) rows below are a **separate, unrelated research thread** (NPMLE/semi-parametric $g(\Delta)$, not the DA+NCP MCMC family this README otherwise covers) and are not implicated in the above — kept as historical reference.
-
-| Method | y-ASSE | Model | Source |
-|--------|:------:|-------|--------|
-| Burr+EM-GMM (unconstrained) | 0.49 | SEV | `rfl_burr_em.py` (overfitting) |
-| Burr+EM-GMM (sigma>=0.15, a>=1) Mode A | 4.09 | SEV | `rfl_burr_em.py` |
-| Burr+INLA | 5.74 | SEV | `rfl_burr_inla.py` |
-| SEV+INLA (MLE in-sample) | 5.76 | SEV | `rfl_profile.py` |
-
-**Current DA+NCP model z-score full-sample (n=75) numbers: see §5.7** — SEV=4.7503, Normal=4.4573, both explicitly **not converged** (Rhat_max 1.18/1.14).
-
-#### Rank Space (P&M 1999 criterion, E)
-
-| Method | E | Notes |
-|--------|---|-------|
-| Normal-Normal MLE (concrete data) | 12.84 | P&M (1999) best result |
-| **Roy Method B (rank-ASSE, direct optimization)** | **12.24** | `rfl_chiu.py`, best in this space |
-
-> **Note (2026-08-11):** The previous row here ("Roy Method C-2 (rank-ASSE) | 12.24 (z), 12.xx (rank)") was erroneous — `rfl_chiu.py`'s `run_z_asse_opt()` (Method C-2) only optimizes the z-ASSE objective and never computes a rank-ASSE score; the "12.24" was actually Method B's rank-ASSE value, misattributed, and "12.xx" was an unfilled placeholder. C-2's real result is a **z-ASSE of 9.94** (Section 6.2's z-score space table above), not a rank-ASSE — removed from this table since it doesn't belong in the rank-ASSE space.
+Removed 2026-08-20 (z-score space, ln-lifetime space, and rank space tables alike): every method previously tabulated here — Chiu (2005) and Roy Methods A/B/C-1/C-2 in z-score space, `SEV+INLA`/`Burr+INLA`/`Burr+EM-GMM` and the retired 73-observation model z-score/sample z-score/DA-plugin numbers in ln-lifetime space, and the rank-matched $E$ criterion in rank space — fits $\hat\theta$ (or an equivalent) on the same data being scored and/or derives each $\hat y_i$ using that observation's own rank or value. Per Roy's 2026-08-20 decision, none of it stays, including the rank-ASSE table: it uses rank rather than magnitude but is constructed the same way — see §5.4's "what in the percentile method is and isn't grounded in P&M (1999)" note for how that table's construction differs from P&M's own $E$ criterion in the Response paper. **Current numbers: §5.4 only** (SEV=4.7503, Normal=4.4573, both explicitly **not converged**).
 
 ### 6.3 Method Comparison Summary
 
@@ -526,21 +446,17 @@ $$\underbrace{\omega_{ij} = \frac{y_{ij} - \bar{y}_j}{s_j}}_{\text{Chiu: sample 
 
 In $V(\ln N \mid S_j) = \beta_1^2 \cdot \text{Var}[\ln(S_j - \Delta)] + \pi^2\sigma^2/6$, the first term is the contribution of $\Delta$ and the second is the SEV residual — the two sources are cleanly separated by full Bayesian inference.
 
-### 7.2 Relation to the Conditional Posterior
+### 7.2 Relation to the Conditional Posterior (corrected 2026-08-20)
 
-The model z-score pipeline is essentially computing an approximation to the conditional posterior of each individual $\Delta_i$:
+An earlier version of this section claimed the model z-score pipeline is "essentially computing an approximation to the conditional posterior of each individual $\Delta_i$," $p(\Delta_i\mid y_i,\theta)\propto f(y_i\mid\Delta_i,\theta)\cdot g(\Delta_i\mid\theta)$ — flagged by review (2026-08-20) as contradicting §5.4's claim that the percentile method is *not* the same operation as DA/NCP's per-observation posterior. The precise, non-contradictory statement: it does **not** sample or evaluate $p(\Delta_i\mid y_i,\theta)$ for any $i$. It fixes one global $\hat\theta$ from the full-sample fit, computes the marginal (Δ-integrated-out) moments $E(Y\mid S_j)/V(Y\mid S_j)$ once per stress level, and applies a deterministic residual-to-quantile mapping to each $y_i$ — a moment-matching heuristic for the inverse problem $y_i\to\Delta_i$, not a Bayesian posterior computation. Whether this heuristic is a good approximation to the true per-observation posterior is an open question this repo has not verified either way.
 
-$$p(\Delta_i \mid y_i, \theta) \propto f(y_i \mid \Delta_i, \theta) \cdot g(\Delta_i \mid \theta)$$
+### 7.3 Normal Approximation vs. Exact Marginal CDF
 
-This method uses the marginal percentile as a proxy for the posterior's "location" — an elegant moment-matching solution to the inverse problem ($y_i \to \Delta_i$) that avoids per-specimen numerical integration and achieves lower ASSE than the DA posterior $E[\Delta_i \mid \mathbf{y}, \theta^{(s)}]$ (H4).
+Using the two-moment Normal approximation $\Phi(z)$ to map a residual to a percentile is a simplification of the exact marginal CDF conditional on failure,
 
-### 7.3 Implicit Regularization Effect of Phi(z)
+$$F_W(w \mid S_j,\hat\theta) = \frac{\int_0^{S_j} F_{\text{SEV}}\bigl(w;\, \beta_0+\beta_1\ln(S_j-\Delta),\,\sigma\bigr)\, g(\Delta\mid\hat\mu_\Delta,\hat\sigma_\Delta)\, d\Delta}{F_\Delta(S_j)} \;\neq\; \Phi(z).$$
 
-The exact marginal CDF (H1) performs worse than $\Phi(z)$ (H0) because:
-
-$$\text{true marginal} = \int f_{\text{SEV}}(y; \mu_\Delta(\Delta), \sigma) \cdot g(\Delta) \thinspace d\Delta \neq \text{Normal}$$
-
-The true marginal has heavier tails than Normal, causing extreme z-values to map to higher percentiles, more extreme $\hat{\Delta}$ estimates, and larger prediction errors. $\Phi(z)$ shrinks extreme z-values toward the mean (implicit shrinkage), effectively reducing variance in the finite sample of n=75.
+$\Phi(z)$ only matches the first two moments of this true marginal; it does not generally over- or under-state percentiles in a fixed direction — that depends on the true marginal's skewness and tail weight relative to Normal, which is itself a function of $\hat\sigma_\Delta$ at each $S_j$, not a universal property. This repo does not currently have a validated claim about which direction the approximation error goes for this model/data — an earlier draft asserted one direction without support and has been removed.
 
 ---
 
@@ -551,15 +467,11 @@ The true marginal has heavier tails than Normal, causing extreme z-values to map
 | File | Function | Priority |
 |------|----------|:--------:|
 | `rfl_pymc_da.py` | **Main inference:** DA+NCP+NUTS (SEV+LN and Normal+LN models) | ⭐⭐⭐ |
-| `rfl_asse_full_sample.py` | **Model z-score ASSE (current):** full n=75 sample, no synthetic censoring, θ̂ plug-in percentile method, HL candidate search over `target_accept` — see §5.7 | ⭐⭐⭐ |
+| `rfl_asse_full_sample.py` | **Model z-score ASSE (current):** full n=75 sample, no synthetic censoring, θ̂ plug-in percentile method, HL candidate search over `target_accept` — see §5.4 | ⭐⭐⭐ |
 
-### Superseded (2026-08-19, pending removal — see `todo.md`)
+### Removed (2026-08-20)
 
-| File | Superseded by | Why |
-|------|----------------|-----|
-| `rfl_model_zscore_asse.py` | `rfl_asse_full_sample.py` | Same method, but only computed over the stale 73-observation synthetic-censoring subset |
-| `rfl_hl_asse.py` | `rfl_asse_full_sample.py` | H0 (the winning heuristic) is now `rfl_asse_full_sample.py`; H1–H4's conclusions (H0 best) were already reached on the old data |
-| `rfl_bayes_asse.py` | `rfl_asse_full_sample.py` | Its DA/NCP latent-$z_\Delta$-posterior ASSE method is in-sample circular reconstruction (uses $y_i$ to infer $\Delta_i$, then compares the reconstruction back to $y_i$) — rejected, not just superseded on data scope
+`rfl_model_zscore_asse.py`, `rfl_hl_asse.py`, `rfl_bayes_asse.py` — superseded by `rfl_asse_full_sample.py` and deleted from this repo; see §5.4 and `git log` for their history.
 
 ### Auxiliary Code (Development)
 
@@ -589,7 +501,7 @@ Recommended PyMC version >= 5.0, using pytensor for automatic differentiation.
 python rfl_pymc_da.py
 ```
 
-Output: posterior samples, Rhat, ESS, LOO-ELPD, and posterior mean ASSE.
+Output: posterior samples, Rhat, ESS. (Does not compute LOO-ELPD or ASSE — the §5.1 LOO-ELPD numbers were produced by a separate, ad hoc analysis, not by this script's current main block; for ASSE see `rfl_asse_full_sample.py` / §5.4.)
 
 ### Full-Sample Model Z-Score ASSE (approx. 20–30 minutes — runs an HL candidate search, 4 NUTS fits per error model)
 
@@ -599,7 +511,7 @@ Output: posterior samples, Rhat, ESS, LOO-ELPD, and posterior mean ASSE.
 python rfl_asse_full_sample.py
 ```
 
-Output: per-candidate convergence diagnostics, chosen $\hat\theta$ for SEV and Normal, full-sample ASSE. **Neither branch currently converges** (see §5.7) — this is documented, expected behavior pending the `Δ<S` reparameterization fix tracked in `todo.md`, not a bug in this script.
+Output: per-candidate convergence diagnostics, chosen $\hat\theta$ for SEV and Normal, full-sample ASSE. **Neither branch currently converges** (see §5.4) — this is documented, expected behavior pending the `Δ<S` reparameterization fix tracked in `todo.md`, not a bug in this script.
 
 ---
 
@@ -608,10 +520,10 @@ Output: per-candidate convergence diagnostics, chosen $\hat\theta$ for SEV and N
 ### Key References
 
 1. **Pascual, F. G., & Meeker, W. Q. (1999).** Estimating fatigue curves with the random fatigue-limit model. *Technometrics*, 41(4), 277–289.
-   *Foundational RFL model paper; this study uses its n=75 aluminum alloy dataset.*
+   *Foundational RFL model paper. The n=75 dataset used here does not match either of this paper's own two datasets — see §4's provenance caveat.*
 
 2. **Chiu, C. (2005).** *Statistical Analysis of Fatigue Data with the Random Fatigue-Limit Model.* PhD Thesis.
-   *Proposes the EIV z-score method; z-ASSE = 10.80 is the primary benchmark for this study.*
+   *Proposes the EIV z-score method. No z-ASSE benchmark against this thesis is reported in this README as of 2026-08-20 (§6.2).*
 
 3. **Hoffman, M. D., & Gelman, A. (2014).** The No-U-Turn Sampler: Adaptively setting path lengths in Hamiltonian Monte Carlo. *Journal of Machine Learning Research*, 15(1), 1593–1623.
    *The NUTS algorithm; the core MCMC engine used in this study.*
@@ -631,7 +543,7 @@ Output: per-candidate convergence diagnostics, chosen $\hat\theta$ for SEV and N
    *Neal's Funnel was first described by Neal; NCP is its standard fix.*
 
 8. **Weng, J. (2026).** Learning beyond gradients: Heuristic learning for sequential decision problems. Preprint.
-   *The original Heuristic Learning paper; this study applies the HL framework to validate the optimal prediction pipeline.*
+   *The original Heuristic Learning paper; this study applies the HL policy-search pattern to NUTS sampler configuration selection (§5.4), not to choosing among prediction pipelines.*
 
 9. **Murphy, S. A., & van der Vaart, A. W. (2000).** On profile likelihood. *Journal of the American Statistical Association*, 95(450), 449–465.
    *Theoretical basis for Profile Likelihood; relevant to Roy's semiparametric RFL work.*
