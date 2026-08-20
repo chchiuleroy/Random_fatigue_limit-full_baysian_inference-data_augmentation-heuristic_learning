@@ -2,7 +2,7 @@
 
 > **Roy (2026-06-02, updated 2026-08-20)**
 > Full Bayesian Inference to improve individual lifetime prediction for the Random Fatigue Limit (RFL) model.
-> Proposes replacing sample statistics with model-theoretic moments (Model Z-Score): fix $\hat\theta$ from a full-sample fit, standardize each observation's residual against the model's marginal moments, and invert that percentile through $\Delta$'s LogNormal quantile function (see §3.2–§3.3 and §5.4's provenance note). Full n=75 sample, no synthetic censoring; **the sampler does not currently converge** (§5.4).
+> Proposes replacing sample statistics with model-theoretic moments (Model Z-Score): fix $\hat\theta$ from a full-sample fit, standardize each observation's residual against the model's marginal moments, and invert that percentile through $\Delta$'s LogNormal quantile function (see §3.2–§3.3 and §5.4's provenance note). NUTS sampler configuration (`target_accept`) is chosen via a Heuristic Learning candidate-search over a fixed policy space (§3.5), not a hand-picked default. Full n=75 sample, no synthetic censoring; **the sampler does not currently converge** (§5.4).
 
 ---
 
@@ -34,7 +34,7 @@
 | No-U-Turn Sampler→(NUTS) | Adaptive HMC algorithm (Hoffman & Gelman 2014) |
 | Hamiltonian Monte Carlo→(HMC) | Underlying algorithm of NUTS |
 | Markov Chain Monte Carlo→(MCMC) | General posterior sampling framework |
-| Heuristic Learning→(HL) | Weng (2026)'s policy-search pattern (state→policy→feedback→loop); used here for NUTS sampler-configuration selection (§5.4), not for choosing among prediction pipelines |
+| Heuristic Learning→(HL) | Weng (2026)'s policy-search pattern (state→policy→feedback→loop); used here for NUTS sampler-configuration selection — see §3.5 for the methods-level statement and §5.4 for the actual per-candidate diagnostics. **Not** used for choosing among prediction pipelines |
 | LogNormal→(LN) | Log-normal distribution; the prior family for $\Delta_i$ |
 
 ### Prediction Error Metrics
@@ -247,6 +247,30 @@ The true $y_i$ is unknown for censored observations. Two principled approaches e
 
 ---
 
+### 3.5 Heuristic Learning (HL) for NUTS Sampler Configuration
+
+**Scope note.** HL is used here **only** for choosing the NUTS sampler configuration, not for choosing among prediction pipelines. The prediction pipeline itself is fixed by §3.2–§3.3 (the percentile method, applied to θ̂ from a full-sample fit) per Roy's 2026-08-20 decision; nothing about HL selects, ranks, or scores that method against alternatives.
+
+**Motivation.** The RFL model's persistent NUTS divergences (see §5.1 callout and §5.4) require an explicit choice of `target_accept` (and, potentially, `draws`/`tune`). Two failure modes were observed:
+
+1. **Escalating chain (tried first, failed).** Raising `target_accept`/`draws`/`tune` together in response to the previous round's diagnostics made divergences *monotonically worse* across rounds (3165→3108→4973→7116). Each escalation reacted to the previous round's specific failure mode rather than sweeping the actual decision space.
+2. **Fixed default (also failed).** Any single hand-picked `target_accept` — 0.85, 0.90, 0.95, 0.99 — leaves either divergences or Rhat at unacceptable levels (see §5.4 tables). No one setting dominates.
+
+**HL policy-search formulation** (following [[concept_heuristic_learning]]):
+
+| HL component | Concrete instantiation |
+|---|---|
+| **State** | Convergence diagnostics of the current NUTS fit: `n_divergences`, `Rhat_max`, `ESS_min` |
+| **Policy space** | A **fixed, finite** set of named candidate configs: `target_accept ∈ {0.85, 0.90, 0.95, 0.99}`, `draws=tune=2000` fixed across candidates |
+| **Feedback signal** | Per-candidate `(Rhat_max, n_divergences)` after running that candidate to completion (not partial-run heuristics) |
+| **Loop / selection rule** | Run **all** candidates independently, then pick `argmin(Rhat_max, n_divergences)` lexicographically. **Not** a single escalating chain conditioned on the previous round's output — that was the failure mode |
+
+**Thresholds** (from `rfl_asse_full_sample.py`, applied inclusively — `n_divergences ≤ DIVERGENCE_OK`, `Rhat_max ≤ RHAT_OK`, `ESS_min ≥ ESS_OK`): `DIVERGENCE_OK=50`, `RHAT_OK=1.05`, `ESS_OK=200`. These are reported honestly against each candidate but do not gate selection — with no candidate satisfying the script's combined acceptance check on the current model, gating would return no configuration.
+
+**Result on this repo (current run).** Candidate search selected `target_accept=0.85` for SEV and `target_accept=0.95` for Normal (§5.4). This is the search finding the least-bad configuration in the tested policy space, not a validated fit — `target_accept=0.99` drove SEV divergences to zero at the cost of Rhat=1.50 and all 4 chains hitting `max_treedepth`. That pattern is *consistent with* a geometry problem (e.g., the un-fixed `Δ<S` soft floor) rather than a step-size tuning problem, but as noted in §5.1's callout `max_treedepth` alone is not a step-size-independent proof. What HL here does establish is a stronger and narrower claim: **no acceptable configuration exists inside this specific policy space**. That is a *finding*, not something to paper over — see §5.4 for full per-candidate diagnostics and the reparameterization work tracked in `todo.md`.
+
+---
+
 ## 4. Data
 
 > **⚠️ 2026-08-20: source attribution below is now suspected wrong, not independently confirmed either way.** Review found that neither of P&M (1999)'s own two datasets (laminate panel, $n=125$ with 10 right-censored; nickel-base superalloy, $246\to115$ observations after trimming, 32 unique strain levels) matches this repo's 75-observation, 5-stress-level×15-replicate structure. What *does* match that structure is the **concrete-fatigue dataset** used in the authors' *Response* to discussants (§2.2, in `roy_km/_raw/pascual_meeker_1999_response.pdf` — the author's separate local knowledge-base repo, not included here and not resolvable by GitHub readers): "five stress levels with 15 measurements each." That is a structural match only — the actual numeric values here (102.95, 280.32, …, 11748.1 at $S=0.675$) have **not** been cross-checked against Castillo & Hadi (1995)'s original concrete data (not available in this repo), so this is not yet a confirmed re-attribution, just a strong reason to distrust the "aluminum alloy, R.R. Moore" label below. Tracked in `todo.md` pending that verification.
@@ -335,9 +359,22 @@ $$\text{LOO-ELPD} = \sum_{i=1}^{75} \log p(y_i \mid \mathbf{y}_{-i})$$
 
 **This study (historical, unreproducible run — see callout above):** SEV+LN = −76.39, Normal+LN = −79.38, $\Delta = 2.99$. SEV's heavier-tailed behavior better captures fatigue life data.
 
-### 5.2 Posterior Parameter Estimates (SEV + LogNormal)
+### 5.2 Posterior Parameter Estimates (full-sample, current)
 
-> ⚠️ Same historical, unreproducible run as §5.1 (see callout there) — not regenerated in this pass.
+Posterior means (θ̂ plug-in) from the HL-selected `target_accept` candidate for each branch — same numbers used to compute §5.4's full-sample ASSE, from `rfl_asse_full_sample.py`:
+
+| Parameter | SEV + LogNormal (target_accept=0.85) | Normal + LogNormal (target_accept=0.95) |
+|-----------|:-----------------------------------:|:---------------------------------------:|
+| $\hat\beta_0$ | −9.3723 | −9.4315 |
+| $\hat\beta_1$ | −9.5951 | −10.1187 |
+| $\hat\sigma$ | 0.1893 | 0.2219 |
+| $\hat\mu_\Delta$ | −0.7204 | −0.7686 |
+| $\hat\sigma_\Delta$ | 0.0407 | 0.0453 |
+
+> ⚠️ Same non-convergence caveat as §5.4 applies to these θ̂: neither branch met the script's combined acceptance check (see §3.5 for the exact `DIVERGENCE_OK`/`RHAT_OK`/`ESS_OK` thresholds and their comparators). Posterior SDs are not tabulated here because the un-converged chains do not give a trustworthy posterior spread; the posterior means above are used only as plug-in point estimates in §5.4's percentile method.
+
+<details>
+<summary>Prior (2026-06) SEV+LogNormal posterior means — historical, not reproducible in the current environment (see §5.1 callout)</summary>
 
 | Parameter | Posterior Mean | Posterior SD | MLE Reference |
 |-----------|:--------------:|:------------:|:-------------:|
@@ -347,7 +384,9 @@ $$\text{LOO-ELPD} = \sum_{i=1}^{75} \log p(y_i \mid \mathbf{y}_{-i})$$
 | $\mu_\Delta$ | −0.660 | 0.082 | −0.644 |
 | $\sigma_\Delta$ | 0.038 | 0.006 | 0.036 |
 
-> Posterior means nearly reproduce MLE — with n=75, Uniform priors are dominated by the likelihood, giving high agreement between Bayesian and frequentist results.
+Historical run's posterior means nearly reproduced MLE; kept here only as an audit trail against which the current-environment estimates (both branches, above) can be compared.
+
+</details>
 
 ### 5.3 Heteroscedastic Structure Across Stress Levels
 
@@ -377,7 +416,7 @@ The SD at low stress (S=0.675) is **2.5x** that at high stress (S=0.9), revealin
 >
 > **A real, unfixed problem: the `Δ<S` support is still a soft floor, not a hard constraint.** `pt.maximum(S_OBS-delta, 1e-8)` lets $\Delta_i \geq S_i$ samples get a finite (clipped) likelihood instead of being properly excluded from the model's support, creating a kink/flat-gradient region right where the sampler needs to be well-behaved. This is a **pre-existing pattern throughout this repo** (`rfl_pymc_da.py` and, historically, the now-removed `rfl_bayes_asse.py`), not something new in this file — but it appears to be the actual root cause of this model's persistent divergence problems (see next paragraph), and the correct fix is a genuine reparameterization, not another patch. **Not fixed in this pass** — tracked in `todo.md`.
 >
-> **HL-loop candidate search (2026-08-19): 8 independent NUTS fits, none converged — and the pattern rules out "just tune harder."** Following [[concept_heuristic_learning]]'s policy-search pattern (state=convergence diagnostics, policy=named candidate configs, feedback=diagnostics per candidate, loop=run all candidates then pick the best — not a single escalating chain, which was tried first and made things *monotonically worse* round over round: divergences went 3165→3108→4973→7116 as `target_accept`/`tune`/`draws` all increased together), `target_accept` ∈ {0.85, 0.90, 0.95, 0.99} was swept independently (draws=tune=2000 fixed) for both SEV and Normal:
+> **HL-loop candidate search (2026-08-19): 8 independent NUTS fits, none converged — and the pattern rules out "just tune harder."** Per §3.5's HL formulation (state=convergence diagnostics, policy=`target_accept` ∈ {0.85, 0.90, 0.95, 0.99} with `draws=tune=2000` fixed, feedback=per-candidate `(Rhat_max, n_divergences)`, selection=`argmin` lexicographic), both SEV and Normal branches:
 >
 > | SEV target_accept | divergences | Rhat_max | ESS_min |
 > |:-:|:-:|:-:|:-:|
@@ -395,7 +434,7 @@ The SD at low stress (S=0.675) is **2.5x** that at high stress (S=0.9), revealin
 >
 > SEV at `target_accept=0.99` hit **zero divergences** — and still has Rhat=1.50, because all 4 chains exhausted `max_treedepth`: the sampler took safely tiny steps and never actually traversed/mixed across the posterior. Zero divergences with terrible Rhat is the textbook signature of a geometry problem HMC/NUTS step-size tuning cannot fix — consistent with the un-fixed `Δ<S` soft-floor being the real blocker, not sampler configuration.
 >
-> **Result: neither branch converged by standard diagnostics (Rhat<1.05, ESS>200, divergences<50).** Per Roy's 2026-08-19 decision, the numbers below are recorded as the current best-effort (lowest Rhat_max among the 4 candidates each), explicitly **not validated**, pending the reparameterization fix (tracked in `todo.md`).
+> **Result: neither branch met the script's combined acceptance check (see §3.5 for the exact thresholds and comparators).** Per Roy's 2026-08-19 decision, the numbers below are recorded as the current best-effort (lowest Rhat_max among the 4 candidates each), explicitly **not validated**, pending the reparameterization fix (tracked in `todo.md`).
 
 | | SEV (target_accept=0.85) | Normal (target_accept=0.95) |
 |---|:-:|:-:|
@@ -543,7 +582,7 @@ Output: per-candidate convergence diagnostics, chosen $\hat\theta$ for SEV and N
    *Neal's Funnel was first described by Neal; NCP is its standard fix.*
 
 8. **Weng, J. (2026).** Learning beyond gradients: Heuristic learning for sequential decision problems. Preprint.
-   *The original Heuristic Learning paper; this study applies the HL policy-search pattern to NUTS sampler configuration selection (§5.4), not to choosing among prediction pipelines.*
+   *The original Heuristic Learning paper; this study applies the HL policy-search pattern to NUTS sampler configuration selection (§3.5 for the methods-level statement, §5.4 for the actual per-candidate diagnostics), **not** to choosing among prediction pipelines. §3.5's inline `[[concept_heuristic_learning]]` is an Obsidian wikilink into the author's separate local knowledge base and is not resolvable by GitHub readers — the primary citable source is this reference.*
 
 9. **Murphy, S. A., & van der Vaart, A. W. (2000).** On profile likelihood. *Journal of the American Statistical Association*, 95(450), 449–465.
    *Theoretical basis for Profile Likelihood; relevant to Roy's semiparametric RFL work.*
