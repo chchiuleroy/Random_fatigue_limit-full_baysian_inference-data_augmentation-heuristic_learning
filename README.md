@@ -493,7 +493,7 @@ An earlier version of this section claimed the model z-score pipeline is "essent
 
 Using the two-moment Normal approximation $\Phi(z)$ to map a residual to a percentile is a simplification of the exact marginal CDF conditional on failure,
 
-$$F_W(w \mid S_j,\hat\theta) = \frac{\int_0^{S_j} F_{\text{SEV}}\bigl(w;\, \beta_0+\beta_1\ln(S_j-\Delta),\,\sigma\bigr)\, g(\Delta\mid\hat\mu_\Delta,\hat\sigma_\Delta)\, d\Delta}{F_\Delta(S_j)} \;\neq\; \Phi(z).$$
+$$F_W(w \mid S_j, \hat\theta) = \frac{\displaystyle\int_0^{S_j} F_{\text{SEV}}(w \mid \beta_0 + \beta_1 \ln(S_j - \Delta), \sigma) \cdot g(\Delta \mid \hat{\mu}_\Delta, \hat{\sigma}_\Delta) \thinspace d\Delta}{F_\Delta(S_j)} \neq \Phi(z).$$
 
 $\Phi(z)$ only matches the first two moments of this true marginal; it does not generally over- or under-state percentiles in a fixed direction — that depends on the true marginal's skewness and tail weight relative to Normal, which is itself a function of $\hat\sigma_\Delta$ at each $S_j$, not a universal property. This repo does not currently have a validated claim about which direction the approximation error goes for this model/data — an earlier draft asserted one direction without support and has been removed.
 
