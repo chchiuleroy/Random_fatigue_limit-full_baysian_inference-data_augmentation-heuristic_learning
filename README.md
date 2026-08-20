@@ -438,7 +438,7 @@ The SD at low stress (S=0.675) is **2.5x** that at high stress (S=0.9), revealin
 
 | | SEV (target_accept=0.85) | Normal (target_accept=0.95) |
 |---|:-:|:-:|
-| $\hat\theta$ | $\beta_0=$-9.3723, $\beta_1=$-9.5951, $\sigma=$0.1893, $\mu_\Delta=$-0.7204, $\sigma_\Delta=$0.0407 | $\beta_0=$-9.4315, $\beta_1=$-10.1187, $\sigma=$0.2219, $\mu_\Delta=$-0.7686, $\sigma_\Delta=$0.0453 |
+| $\hat\theta$ | $\beta_0 = -9.3723$, $\beta_1 = -9.5951$, $\sigma = 0.1893$, $\mu_\Delta = -0.7204$, $\sigma_\Delta = 0.0407$ | $\beta_0 = -9.4315$, $\beta_1 = -10.1187$, $\sigma = 0.2219$, $\mu_\Delta = -0.7686$, $\sigma_\Delta = 0.0453$ |
 | **Full-sample (n=75) ASSE** | **4.7503** | **4.4573** |
 | Divergences | 3165 | 859 |
 | Rhat_max | 1.18 | 1.14 |
