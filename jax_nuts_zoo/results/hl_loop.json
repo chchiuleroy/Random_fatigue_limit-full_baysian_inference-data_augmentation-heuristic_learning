@@ -1,0 +1,75 @@
+{
+ "fixed-H0": {
+  "best_state": [
+   "t",
+   "lognormal",
+   "H0"
+  ],
+  "best_asse": 4.1321,
+  "exhaustive_best": [
+   "t",
+   "lognormal",
+   "H0"
+  ],
+  "exhaustive_asse": 4.1321,
+  "n_starts": 9,
+  "end_state_counts": {
+   "t/lognormal/H0": 9
+  },
+  "mean_final_weights": {
+   "error": 0.5,
+   "limit": 0.5,
+   "heuristic": 0.0
+  },
+  "distinct_asse_evaluations": 9
+ },
+ "free": {
+  "best_state": [
+   "t",
+   "gamma",
+   "H1"
+  ],
+  "best_asse": 0.4201,
+  "exhaustive_best": [
+   "t",
+   "gamma",
+   "H1"
+  ],
+  "exhaustive_asse": 0.4201,
+  "n_starts": 27,
+  "end_state_counts": {
+   "t/gamma/H1": 27
+  },
+  "mean_final_weights": {
+   "error": 0.322,
+   "limit": 0.348,
+   "heuristic": 0.33
+  },
+  "distinct_asse_evaluations": 27
+ },
+ "gated": {
+  "best_state": [
+   "sev",
+   "gamma",
+   "H1"
+  ],
+  "best_asse": 0.9488,
+  "exhaustive_best": [
+   "sev",
+   "gamma",
+   "H1"
+  ],
+  "exhaustive_asse": 0.9488,
+  "n_starts": 24,
+  "end_state_counts": {
+   "sev/gamma/H1": 16,
+   "t/lognormal/H1": 8
+  },
+  "mean_final_weights": {
+   "error": 0.336,
+   "limit": 0.335,
+   "heuristic": 0.33
+  },
+  "distinct_asse_evaluations": 24
+ }
+}

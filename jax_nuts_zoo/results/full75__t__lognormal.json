@@ -1,0 +1,19 @@
+{
+ "job": "full75__t__lognormal",
+ "stage": "full75",
+ "kind": "t",
+ "gtype": "lognormal",
+ "n": 75,
+ "seconds": 237.1,
+ "rhat_max": 1.03,
+ "ess_bulk_min": 161.0,
+ "divergences": 5,
+ "post_median": {
+  "beta0": -9.54911720587423,
+  "beta1": -9.452086090547322,
+  "log_nu": 2.704587216095566,
+  "log_sigma": -1.7773081807193392,
+  "log_sigma_d": -3.2245947604351786,
+  "mu_d": -0.700611580262343
+ }
+}

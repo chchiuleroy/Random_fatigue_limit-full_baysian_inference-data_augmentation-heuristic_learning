@@ -1,0 +1,19 @@
+{
+ "job": "full75__t__weibull",
+ "stage": "full75",
+ "kind": "t",
+ "gtype": "weibull",
+ "n": 75,
+ "seconds": 755.4,
+ "rhat_max": 1.0,
+ "ess_bulk_min": 226.0,
+ "divergences": 11,
+ "post_median": {
+  "beta0": -9.253283661302685,
+  "beta1": -8.116080994536238,
+  "log_k_d": 3.4202636571209406,
+  "log_lam_d": -0.6061510952877256,
+  "log_nu": 2.6711060666312925,
+  "log_sigma": -1.5430514629621876
+ }
+}

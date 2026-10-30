@@ -1,0 +1,18 @@
+{
+ "job": "full__sev__lognormal",
+ "stage": "full",
+ "kind": "sev",
+ "gtype": "lognormal",
+ "n": 75,
+ "seconds": 177.5,
+ "rhat_max": 1.01,
+ "ess_bulk_min": 254.0,
+ "divergences": 5,
+ "post_median": {
+  "beta0": -9.413355327892841,
+  "beta1": -8.905873070924608,
+  "log_sigma": -1.8867183382950377,
+  "log_sigma_d": -3.2345616933000043,
+  "mu_d": -0.6655932654894136
+ }
+}

@@ -1,0 +1,19 @@
+{
+ "job": "full75__t__gamma",
+ "stage": "full75",
+ "kind": "t",
+ "gtype": "gamma",
+ "n": 75,
+ "seconds": 490.6,
+ "rhat_max": 1.63,
+ "ess_bulk_min": 3.0,
+ "divergences": 207,
+ "post_median": {
+  "beta0": -5.532517415974072,
+  "beta1": -22.428664495907263,
+  "log_alpha_d": 2.4648337555600275,
+  "log_beta_r": 4.977217751036602,
+  "log_nu": 1.7735122040974143,
+  "log_sigma": -3.2320888188919525
+ }
+}

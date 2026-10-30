@@ -183,6 +183,49 @@ $$V(\ln N \mid S_j) = \hat{\beta}_1^2 \cdot \underbrace{\text{Var}[\ln(S_j - \De
 5. ASSE:            sum|y_ij - y_hat_ij|
 ```
 
+#### Step 3: How ASSE Is Computed — Derivation and Worked Example (added 2026-10-29)
+
+This step spells out *why* each line of the pipeline is what it is, and walks one stress level through it numerically. Everything below uses the plug-in $\hat\theta$ (posterior means) and the n=75 full sample of §5.4, with all 75 points treated as failures.
+
+**(a) Mean and variance of $\ln N$ come from the *marginal* distribution of $\ln N$ (the mixture over $\Delta$).** Conditional on $\Delta$, $\ln N = \mu(S,\Delta) + \sigma\varepsilon$ with $\mu(S,\Delta)=\beta_0+\beta_1\ln(S-\Delta)$ and $\varepsilon \perp \Delta$. Only specimens with $\Delta<S$ fail, so $\Delta$ is restricted to $(0,S_j)$ (hence the normalization by $F_\Delta(S_j)$). With $e_\varepsilon$, $v_\varepsilon$ the mean and variance of the standardized error ($-\gamma_E$ and $\pi^2/6$ for SEV; $0$ and $1$ for Normal), the laws of total expectation and total variance give
+
+$$E(\ln N\mid S_j)=\hat\beta_0+\hat\beta_1\,E_\Delta[\ln(S_j-\Delta)]+\hat\sigma e_\varepsilon,\qquad V(\ln N\mid S_j)=\hat\beta_1^2\,\mathrm{Var}_\Delta[\ln(S_j-\Delta)]+\hat\sigma^2 v_\varepsilon ,$$
+
+where $E_\Delta$ and $\mathrm{Var}_\Delta$ are taken under $g(\Delta)$ truncated to $(0,S_j)$. The first variance term is the between-specimen ($\Delta$) part, the second is the within-specimen (residual) part; the cross term vanishes because $\varepsilon\perp\Delta$.
+
+**(b) The percentile of $y_{ij}$ is matched to the same percentile of $\Delta$.** The model z-score $z_{ij}=(y_{ij}-E)/\sqrt{V}$ places the observation inside the marginal distribution of $\ln N$ at that stress; $p_{ij}=\Phi(z_{ij})$ is its percentile (a Normal approximation to the marginal CDF). Because $\beta_1<0$, a larger $\Delta$ shortens $S-\Delta$ and *lengthens* life, so life and $\Delta$ are monotonically related, and the observation is assigned the $\Delta$ at the **same percentile** of $g$:
+
+$$\hat\Delta_{ij}=G^{-1}(p_{ij}) \;=\; \exp\!\big(\hat\mu_\Delta+\hat\sigma_\Delta\,\Phi^{-1}(p_{ij})\big)=\exp\!\big(\hat\mu_\Delta+\hat\sigma_\Delta\,z_{ij}\big)\quad\text{(LogNormal; } \Phi^{-1}(\Phi(z))=z\text{)} .$$
+
+**(c) The prediction is the structural part at $\hat\Delta_{ij}$**, not a simulated draw: $\hat y_{ij}=\hat\beta_0+\hat\beta_1\ln(S_j-\hat\Delta_{ij})+\hat\sigma e_\varepsilon$ (the error is replaced by its mean), and $\text{ASSE}=\sum_{j}\sum_i|y_{ij}-\hat y_{ij}|$.
+
+**Implementation details** (`rfl_model_zscore_asse.py`, `rfl_hl_asse.py`, `rfl_asse_full_sample.py`): the moments are computed by 32-point Gauss–Legendre on $(0,S_j)$ divided by $F_\Delta(S_j)$; $z$ is clipped to $[-6,6]$ in the H0 heuristic; $\hat\Delta$ is clipped to $[10^{-6},\,0.999\,S_j]$; the older 3.4766 / 3.6156 figures sum over the 73 non-tied observations, the current §5.4 figures over all 75.
+
+**Worked example — SEV, $S_1=0.675$** with the §5.4 estimate $\hat\beta_0=-9.3723,\ \hat\beta_1=-9.5951,\ \hat\sigma=0.1893,\ \hat\mu_\Delta=-0.7204,\ \hat\sigma_\Delta=0.0407$:
+
+| quantity | value |
+|---|---|
+| $E_\Delta[\ln(S_1-\Delta)]$, $\mathrm{Var}_\Delta[\ln(S_1-\Delta)]$ | $-1.6768$, $0.01160$ |
+| $E(\ln N\mid S_1)=-9.3723+(-9.5951)(-1.6768)+(-0.1893\gamma_E)$ | $6.6076$ |
+| $V(\ln N\mid S_1)=9.5951^2(0.01160)+\pi^2(0.1893)^2/6$ | $1.1272$ (sd $1.0617$) |
+
+| obs (sorted) | $y$ | $z$ | $p=\Phi(z)$ | $\hat\Delta=e^{\hat\mu_\Delta+\hat\sigma_\Delta z}$ | $\hat y$ | $\lvert y-\hat y\rvert$ |
+|---|---|---|---|---|---|---|
+| 1 | 4.634 | −1.859 | 0.0315 | 0.45111 | 4.878 | 0.244 |
+| 8 | 7.124 | 0.487 | 0.6867 | 0.49629 | 7.041 | 0.083 |
+| 15 | 9.371 | 2.603 | 0.9954 | 0.54094 | 9.799 | 0.428 |
+
+Summing all 15 observations of this level gives its ASSE contribution (1.752 for SEV); the five levels together give the totals below.
+
+| error | per-level contributions ($S$ = 0.675, 0.75, 0.825, 0.9, 0.95) | total (independent re-implementation) | §5.4 |
+|---|---|---|---|
+| SEV | 1.752, 0.718, 0.700, 0.627, 0.955 | 4.7515 | 4.7503 |
+| Normal | 2.002, 0.628, 0.593, 0.480, 0.754 | 4.4564 | 4.4573 |
+
+The small differences come from rounding $\hat\theta$ to four decimals and from 32-point vs. high-order quadrature in the moments.
+
+**Numerical-accuracy note (checked 2026-10-29).** The integrand is narrow (the $\Delta$ spread is small relative to $S-\Delta$), so fixed-node quadrature matters. For the H0 heuristic the effect is small (3.636 with 32 nodes vs. 3.603 with 400, SEV+LogNormal, 73 non-tied observations, $\hat\theta$ from an independent NUTS fit). For the exact-marginal-CDF heuristic H1, which evaluates the marginal CDF by the same quadrature, the effect is large: 12.917 with 32 nodes, 2.241 with 100 and 2.135 with 400 nodes, i.e. the earlier H1 > H0 ranking looks quadrature-limited. Those retired 73-observation comparisons were not otherwise re-run.
+
 ---
 
 ### 3.3 Prediction Pipeline (current)
@@ -446,6 +489,90 @@ The SD at low stress (S=0.675) is **2.5x** that at high stress (S=0.9), revealin
 
 This table exists to answer "what's the full-sample ASSE" honestly, not to declare a new best method.
 
+### 5.5 Error × Fatigue-Limit Model Zoo, JAX/NumPyro NUTS — `jax_nuts_zoo/` (added 2026-10-29)
+
+> [!note] Scope
+> Same data (n=75, all failures, §5.4 protocol), same y-ASSE pipeline as §3.2 Step 3 — only the model family is widened: error $\in$ {Normal, SEV, Student-t} $\times$ fatigue limit $\Delta \in$ {LogNormal, Gamma, Weibull} = 9 models, each fit by full Bayes and scored with the **same** plug-in y-ASSE. Single-seed point estimates; no uncertainty on the ASSE values. The ADR (agent-chosen distribution) task and the HL loop over structures that motivated this are **not** part of this commit.
+
+**How it differs from §5.4's sampler.** `jax_nuts_zoo/rfl_zoo.py` integrates $\Delta$ out of the likelihood (Gauss–Hermite in $z$-space for LogNormal, Gauss–Legendre on $(0,S)$ for Gamma, probability-integral-transform quadrature for Weibull), so there is no soft floor on $S-\Delta$ and no latent $\Delta_i$ to sample. The sampler is NumPyro NUTS with a dense mass matrix, 2 chains × (1000 warm-up + 1000 draws), `target_accept` 0.9. Shape gradients of `betainc`/`gammaincc` (missing in JAX) use a finite-difference `custom_jvp`. Equivalence with the repo's numpy likelihood (`rfl_pymc_ncp.py`) is checked in `test_zoo.py` (max difference $\le 1.1\times10^{-12}$ at matched node counts; gradients vs finite differences).
+
+**Why 200/400 quadrature nodes.** The integrand in $\Delta$ is narrow, so fixed small rules are inaccurate: with Gauss–Legendre 24 nodes the Gamma-limit log-marginal is off by 0.31–0.37 (vs $\sim10^{-14}$ at 400 nodes), and the old 32-node construction moves H0 from 3.636 to 3.603 and H1 from 12.917 to 2.135 as nodes go 32 → 400 (`test_quadrature.py`, SEV + LogNormal on the censored-maxima fit). The zoo uses 200 Gauss–Hermite and 400 Gauss–Legendre nodes. Weibull-limit log-marginals agree with adaptive `scipy.integrate.quad` to $3.4\times10^{-3}$ (worst case over 48 parameter/stress combinations).
+
+**y-ASSE (plug-in = posterior means), n = 75** (`jax_nuts_zoo/results/yasse_full75.csv`, produced by `make_table.py full75`). H0 is the pipeline of §3.2 (Φ(z) percentile → $\hat\Delta$ → $\hat y$); H1 uses the exact marginal CDF instead of Φ(z); H3 is per-stress-level z calibration (sd floor 0.5); (A fourth heuristic, $E[\Delta_i\mid y_i,\hat\theta]$, uses the conditional posterior of each observation's own $\Delta_i$ given $y_i$, the circular reconstruction §5.4 rejects, and was dropped. H0, H1 and H3 are different: with $\hat\theta$ fixed they map $y_i$ through the marginal law at its stress level, a monotone transform, and never infer $\Delta_i$ from its own likelihood; they still use $\hat\theta$ fitted on the same 75 points, as the §5.4 pipeline does.)
+
+| Error | $\Delta$ | Rhat max | ESS min | Divergences | **H0** | H1 | H3 |
+|---|---|:-:|:-:|:-:|:-:|:-:|:-:|
+| Normal | LogNormal | 1.020 | 147 | 5 | **4.332** | 2.337 | 12.738 |
+| Normal | Gamma | 1.020 | 197 | 107 | 7.781 | 1.093 | 33.165 |
+| Normal | Weibull | 1.030 | 127 | 82 | 5.957 | 2.780 | 12.107 |
+| SEV | LogNormal | 1.030 | 99 | 1 | **4.383** | 2.377 | 12.310 |
+| SEV | Gamma | 1.040 | 33 | 153 | 7.667 | 0.949 | 32.543 |
+| SEV | Weibull | 1.020 | 107 | 109 | 5.433 | 1.718 | 10.864 |
+| Student-t | LogNormal | 1.030 | 161 | 5 | **4.132** | 2.038 | 12.583 |
+| Student-t | Gamma | **1.630** | **3** | 207 | 7.461 | 0.420 | 28.067 |
+| Student-t | Weibull | 1.000 | 226 | 11 | 6.118 | 2.933 | 12.078 |
+
+**What can and cannot be read from this table.**
+
+- **Student-t × Gamma did not converge (Rhat 1.63, ESS 3): its row is not usable.** The other Gamma fits and the Normal/SEV Weibull fits have 82–153 divergences (ESS as low as 33), so those rows are provisional too; Student-t × Weibull has 11. Only the LogNormal fits (1–5 divergences, Rhat $\le$ 1.03) are comparable in quality to each other. ESS min of 99–161 is modest even there.
+- Under H0 (the pipeline this README is about) LogNormal $\Delta$ gives the lowest ASSE for every error family (4.13–4.38), Weibull is next (5.43–6.12), Gamma worst (7.46–7.78). The spread among the three LogNormal rows (4.132 / 4.332 / 4.383) is small, from one seed and a plug-in point estimate, so the error-family ordering within LogNormal is **not** established by this run.
+- **Student-t plug-in.** $\nu$ enters the plug-in as its posterior mean like every other parameter. Its posterior is very skewed (mean 19–25, median 5.6–13, 5th percentile 2.1–2.4, prior upper bound 100), so the Student-t rows depend on this choice: with the posterior median instead, Student-t+LogNormal H0 was 4.244 rather than 4.132 (H1 2.189 vs 2.038). The ranking in the table did not change. `err_moments` raises if the plug-in $\nu \le 2$ (infinite variance) instead of substituting another value.
+- H1 ranks Gamma best (0.42–1.09) while H3 puts Gamma at 28–33, an order of magnitude worse than the other models. Such a disagreement between heuristics, together with the divergences, points to a degenerate percentile/CDF mapping in the poorly sampled Gamma posteriors rather than a better model; do not read H1 as evidence for Gamma.
+- **These H0 values (4.332 Normal, 4.383 SEV, LogNormal) are lower than the §5.4 table (4.4573 / 4.7503).** The $\hat\theta$ differ: §5.4 used the unconverged chains (Rhat 1.14–1.18, hundreds to thousands of divergences); here $\hat\theta$ comes from marginalised-likelihood fits with Rhat $\le$ 1.03 (e.g. Normal: $\beta_0=-9.506$, $\beta_1=-9.644$, $\sigma=0.215$, $\mu_\Delta=-0.722$, $\sigma_\Delta=0.041$). That the marginalisation (no soft floor) is why it converges is a plausible explanation consistent with §5.4's diagnosis, not something this run isolates. The ASSE computation itself reproduces §5.4 when given §5.4's $\hat\theta$: 4.7515 vs 4.7503 (SEV) and 4.4564 vs 4.4573 (Normal), the residual differences are the 73-vs-75-point and node-count details noted in §3.2 Step 3 (not isolated individually).
+
+**Seeds.** The published `results/*.npz` were fitted with seeds derived from Python's per-process `hash()`; `runner.py` now uses a deterministic CRC32 seed, so a re-run gives statistically equivalent but not bit-identical draws. The two `results/full__*` files are the older censored-maxima protocol fits, kept only because `test_quadrature.py` part 4 reads them. The `results/*.json` files were trimmed to the fields `runner.py` writes (an earlier runner version had also stored rank-based ASSE fields; they are not used anywhere here).
+
+### 5.6 ADR-RFL and an HL Loop on the Same 9 Structures (added 2026-10-29)
+
+Question: if an agent (ADR, Tedesco 2026, arXiv 2610.37611) chooses the error and fatigue-limit distributions **without seeing ASSE**, which structure does it pick and how does that pick score in y-ASSE? And what does an HL loop that uses y-ASSE as its reward pick?
+
+**ADR-RFL** (`adr_rfl.py`; record in `results/adr_rfl_agents.json`). Three independent Sonnet subagents, each in a sandbox holding only the tool, the likelihood code and the 9 fits (no `yasse.py`, no ASSE numbers, no README), told that a hidden metric would score the choice. The tool returns posterior summaries, Rhat/ESS/divergences and WAIC (`results/waic_full75.csv`). The agents did not trigger new NUTS fits: all 9 structures were pre-fitted (one NUTS run each, one seed), and the agents read those published fits, so what they saw is the same evidence a refit would approximate (a re-run would give statistically equivalent, not identical, draws); their search space was exactly those 9 structures. The "blind" property rests on the sandbox and the agents' self-reported commands.
+
+- All three chose **Normal + LogNormal** (top 3 identical: Normal, Student-t, SEV, all LogNormal). WAIC elpd: Normal+LN −77.94, Student-t+LN −78.07, SEV+LN −78.39, Weibull −80.8 to −81.4, Gamma −85.4 to −85.7; the standard errors are about 7, so the three LogNormal structures are statistically tied (gaps 0.1–0.5) and the error family is **not identified** by this data (Student-t ν posterior about 25 ± 26). The LogNormal-vs-Weibull gap (about 3 elpd) is also within the SE.
+- Agreement of three agents is **not three independent confirmations**: they used the same tool and the same WAIC table, and effectively took its argmax (breaking the tie by parsimony). Their own caveats: nobody compared the LogNormal fatigue-limit mean with the stress range beyond the lowest level (one agent noted Δ's median ≈ 0.49 lies below the lowest stress 0.675, and that the Weibull fit's shape ≈ 30 is near-degenerate, so the data cannot tell a fixed limit from a very tight random one); σ is weakly identified (e.g. 0.21 ± 0.12); SEV+LogNormal ESS is only 99.
+- **Score of the ADR choice (Normal + LogNormal): H0 4.332 (2nd of 9, best is Student-t+LogNormal 4.132), H1 2.337 (6th of 9), H3 12.738 (6th of 9).** In the H0 pipeline the agents' pick is within 0.20 of the best; under H1 and H3 it is mid-table.
+
+**HL loop** (`hl_loop.py`, `results/hl_loop.json`): state = (error, limit, heuristic ∈ {H0,H1,H3}), reward = −y-ASSE, proposals change one coordinate with learned coordinate weights, 40 proposals from each of the 27 starts. There is no held-out data, so the loop selects among 27 reported numbers, not a validated improvement; its learned weights stay near uniform and carry no information, and the exhaustive minimum over the 27 states is the same as the loop's result.
+
+| Variant | Winner | y-ASSE | Note |
+|---|---|:-:|---|
+| heuristic fixed to H0 (the README pipeline) | Student-t + LogNormal | 4.132 | all 9 starts end here |
+| heuristic free | Student-t + Gamma + H1 | 0.420 | that fit did not converge (Rhat 1.63, ESS 3) |
+| free, non-converged fits excluded (Rhat ≤ 1.05, ESS ≥ 30) | SEV + Gamma + H1 | 0.949 | 16 of 24 starts; the other 8 stop at Student-t + LogNormal + H1 |
+
+**What H1 measures (derived, then checked numerically on the 9 fits with `h1_w1_check.py`).** H1 maps $y \mapsto p=F(y\mid S) \mapsto \hat\Delta=G^{-1}(p) \mapsto \hat y=\mu(\hat\Delta)$ with $\mu(\Delta)=\beta_0+\beta_1\ln(S-\Delta)$ the error-free part, i.e. $\hat y = Q_\mu(F_y(y))$, the quantile-to-quantile map from the law of $y\mid S$ to the law of $\mu(\Delta)$ (plus the constant SEV mean shift $-\sigma\gamma$ when the error is SEV, which `yhat_from_delta` adds). So $\sum_i|y_i-\hat y_i|$ estimates $\sum_j n_j W_1(\mathcal L(y\mid S_j),\mathcal L(\mu(\Delta)+\text{shift}))$: it shrinks when the dispersion the error term adds is small *relative to the dispersion of the structural part* (not when $\sigma$ alone is small), whether or not the structure fits the data. H1 maps $p$ through the untruncated $G^{-1}$ and clips $\hat\Delta$ at $0.999S$ as the §3.2 pipeline does; $G(0.675)\ge 1-2\times10^{-15}$ for all nine real-data fits, so truncation and the clip have no numerical effect here. The theoretical $\sum_j n_j W_1$ computed from the fitted parameters alone agrees with the sample H1 ASSE (e.g. Normal+LogNormal 2.322 vs 2.337, SEV+LogNormal 2.380 vs 2.377, Student-t+Gamma 0.421 vs 0.420; largest gap 0.2, Student-t+Weibull 2.735 vs 2.933); `h1_w1_check.py` uses the same quantile maps as `yasse.py`, so this confirms the algebra against the code, not the code path independently. H1 is therefore a noise-size measure more than a goodness-of-fit measure; a correctly specified model with large $\sigma$ scores worse than a misspecified one with small $\sigma$. (I have not shown the same identity for H0, which uses the moment-matched $\Phi(z)$ instead of $F$.)
+
+**Simulation check (`sim_study.py`, `analyze_sim.py`, `results/sim_*.jsonl`, `results/sim_summary.json`).** Data were simulated from a known structure on the real design (5 stress levels × 15 failures), with parameters taken from the real-data fit of that structure; all 9 structures were then refitted by maximum likelihood (NUTS priors as box bounds, 3 starts; MLE instead of NUTS so that 4 × 100 × 9 fits are affordable) and scored with the MLE plug-in. 100 replications per truth. "Picks truth" = the structure with the lowest score (AIC for the first row) is the true one; chance is 11%.
+
+| True structure | Score | Picks truth | Picks truth's limit family | Picks a Gamma limit | Mean rank of truth (1 = best) |
+|---|---|:-:|:-:|:-:|:-:|
+| SEV + LogNormal | AIC | 52% | 86% | 5% | 1.91 |
+| | H0 | 44% | 83% | 11% | 2.56 |
+| | H1 | **2%** | 2% | **82%** | 5.29 |
+| | H3 | 27% | 73% | 0% | 3.26 |
+| Normal + LogNormal | AIC | 24% | 89% | 3% | 2.27 |
+| | H0 | 15% | 86% | 5% | 3.57 |
+| | H1 | **1%** | 2% | **87%** | 5.49 |
+| | H3 | 31% | 75% | 0% | 2.65 |
+| SEV + Weibull | AIC | 53% | 76% | 0% | 1.96 |
+| | H0 | 7% | 37% | 12% | 4.72 |
+| | H1 | **2%** | 38% | **61%** | 4.76 |
+| | H3 | 20% | 74% | 0% | 2.77 |
+| Normal + Gamma | AIC | 11% | 45% | 45% | 3.97 |
+| | H0 | 0% | 3% | 3% | 6.36 |
+| | H1 | 24% | 50% | 50% | 3.66 |
+| | H3 | 2% | 23% | 23% | 5.15 |
+
+Within a replication, the Spearman correlation between the fitted $\hat\sigma$ of the 9 structures and their score averages +0.80 to +0.86 for H1 (+0.35 to +0.46 for H0; −0.36 to +0.52 for H3). A second test (true structure SEV + LogNormal, 60 replications, only the correct structure fitted, true $\sigma$ multiplied by 0.5 / 1 / 2) gives mean scores H0 3.105 / 3.822 / 7.802 and H1 0.986 / 1.544 / 5.580: a correctly specified model scores worse as the noise grows. (The fitted $\hat\sigma$ is 0.071 / 0.084 / 0.201 against true 0.075 / 0.151 / 0.302. Why the fitted $\hat\sigma$ falls below the true one at multiplier 1 — for example the MLE assigning part of the scatter to $\Delta$ — is a hypothesis: this run stored neither the $\Delta$ parameters nor a variance decomposition, and the three multipliers used different, unpaired random draws.)
+
+Reading (what was observed with this implementation, these four truths and MLE fits; not a general property of the heuristics): **H1 did not pick the true structure** — with LogNormal or Weibull truth it picks the true structure in 1–2% of replications (below chance) and picks a Gamma limit (the smallest fitted $\sigma$) in 61–87%, where AIC picks the truth in 24–53% and the right limit family in 76–89%. H0 does better for LogNormal truths (44% and 15% for SEV and Normal; error family poorly identified) but is worse than AIC and fails for Weibull (7%) and Gamma (0%) truths. H3 is comparable to AIC for LogNormal truths (31% vs 24% for Normal + LogNormal, a difference within the ±5% sampling error of 100 replications) and weaker elsewhere. With a Gamma truth H1 scores best of the four (24% vs AIC 11%), as expected from a score that favours small fitted $\sigma$ and Gamma fits (half of H1's picks are Gamma there, whatever the error family). Limits: four truths only, parameters from fits of one data set, MLE rather than posterior means, Student-t ν bounded to [2.5, 100]; the mean fitted $\sigma$ of the structures H1 picks is 0.017–0.043, against 0.069–0.115 for AIC. No fit raised an exception, but optimizer success flags, gradient norms and bound hits were not stored, so convergence of each MLE is not verified (3 starts, all in the neighbourhood of the real-data fit). The simulated data were drawn from $\Delta$ truncated to $(0,S)$ while the fitted likelihood does not divide by $G(S)$; $G(0.675)=1$ to within $2\times10^{-15}$ for the nine real-data fits that supply the truth parameters, so this mismatch has no numerical effect there.
+
+**Check with the repo's DA+NCP fits (`da_sim_study.py`, `analyze_da_sim.py`, `results/da_sim_summary.json`).** The same simulation (truth SEV + LogNormal, 6 replications only) was refitted with `rfl_asse_full_sample.build_model` (unchanged; only its data replaced), next to an MLE fit of the same data. The DA fits did not converge: SEV + LogNormal mean Rhat_max 1.67, ESS_min 20, about 756 divergences; Normal + LogNormal 1.82, 7, about 617. Their plug-in log-likelihood is far below the MLE's (−92.7 vs −67.1; −82.7 vs −67.7), and the scores differ accordingly (H0 5.639 vs 3.642 and 4.256 vs 3.682; H1 1.212 vs 1.522 and 1.095 vs 1.574; H3 33.4 vs 11.0 and 26.0 vs 10.7). Out of 6 replications the SEV + LogNormal structure was picked by DA-H0 1, DA-H1 2, DA-H3 4, MLE-H0 3, MLE-H1 2, MLE-H3 2 and AIC 4 times — too few to support any selection claim. A one-off smoke test of the repo's Gamma DA model (`rfl_pymc_da.build_da_model`) on the first simulated data set gave Rhat_max 2.76, ESS_min 4, 708 divergences and a log-likelihood of −116.9, so a DA-based test of the Gamma preference is not possible with that code. The MLE-based simulation above is therefore the only selection evidence, and it has not been reproduced with the §3.1 DA sampler.
+
+**What the free-heuristic loop's Gamma + H1 result means (an association over the 9 real fits, now supported by the simulation above).** y-ASSE replaces the error term by its mean, so a model that puts more of the within-stress scatter into $\Delta$ has less left to miss; but this is not a necessary condition (the quantile map, $\beta_1$ and the scale of $\Delta$ can compensate each other). `delta_share.py` computes the share of $\mathrm{Var}(\ln N\mid S)$ due to $\Delta$ (mean over the five stress levels, plug-in θ̂, `results/delta_share.csv`): Gamma 0.96–0.98, LogNormal 0.87–0.88, Weibull 0.85–0.91. The H1 y-ASSE is **perfectly monotone** in this share across the 9 models (Spearman −1.0); H0 and H3 are not (Spearman +0.45 and +0.67, i.e. the opposite direction, mainly because Gamma scores badly there). WAIC ranks the same Gamma fits last (about 7.5 elpd below LogNormal) and those fits need β₁ ≈ −22 against ≈ −9.6, with 107–207 divergences. So a loop allowed to choose both heuristic and structure on y-ASSE alone picks fits that WAIC and the sampler diagnostics rank last. That is the usual symptom of over-optimising an internal metric (the internal score improves while an independent criterion degrades), **not a demonstration of reward hacking**: WAIC and y-ASSE measure different things, and H0 and H3 do not show the pattern. This section therefore reports the fixed-H0 result as the HL outcome and does not treat the free-heuristic winner as a finding about the models. Testing the hypothesis would need, for example, simulated data from a known structure (does y-ASSE-H1 still prefer a Gamma refit?).
+
+**Scope and limits.** One data set (n = 75), one seed per fit, plug-in point estimates; the H0 gaps among the three LogNormal structures (4.132, 4.332, 4.383) are not tested for significance. The agents choose among 9 pre-fitted structures, not open-ended distributions as in ADR proper. y-ASSE and WAIC answer different questions (reconstruction of $y$ through the quantile map vs. predictive density); here they agree on LogNormal under H0 and disagree under H1.
+
 ---
 
 ## 6. Comparison with Prior Work
@@ -531,6 +658,8 @@ $\Phi(z)$ only matches the first two moments of this true marginal; it does not 
 |------|----------|:--------:|
 | `rfl_pymc_da.py` | **Main inference:** DA+NCP+NUTS (SEV+LN and Normal+LN models) | ⭐⭐⭐ |
 | `rfl_asse_full_sample.py` | **Model z-score ASSE (current):** full n=75 sample, no synthetic censoring, θ̂ plug-in percentile method, HL candidate search over `target_accept` — see §5.4 | ⭐⭐⭐ |
+| `jax_nuts_zoo/` | **Model zoo (added 2026-10-29):** JAX/NumPyro NUTS fits of 9 error × fatigue-limit models (`rfl_zoo.py`, `runner.py`), y-ASSE scoring (`yasse.py`, `make_table.py`), ADR tool and HL loop (`adr_rfl.py`, `hl_loop.py`, `delta_share.py`, `h1_w1_check.py`, `node_convergence.py`, `sim_study.py`, `analyze_sim.py`, `da_sim_study.py`, `analyze_da_sim.py`), and tests (`test_zoo.py`, `test_quadrature.py`) — see §5.5–5.6 | ⭐⭐ |
+
 
 ### Removed (2026-08-20)
 
@@ -575,6 +704,28 @@ python rfl_asse_full_sample.py
 ```
 
 Output: per-candidate convergence diagnostics, chosen $\hat\theta$ for SEV and Normal, full-sample ASSE. **Neither branch currently converges** (see §5.4) — this is documented, expected behavior pending the `Δ<S` reparameterization fix tracked in `todo.md`, not a bug in this script.
+
+### Model Zoo (JAX/NumPyro, added 2026-10-29; tens of minutes on 6 workers)
+
+```bash
+pip install jax numpyro arviz pandas
+cd jax_nuts_zoo
+python test_zoo.py          # likelihood equivalence + gradient checks (expects "FAILS: 0")
+python test_quadrature.py   # quadrature-accuracy checks quoted in section 5.5
+python runner.py full75 6   # fit 9 models into results/ (existing results are skipped)
+python make_table.py full75 # y-ASSE table -> results/yasse_full75.csv
+python hl_loop.py           # HL loop over structure x heuristic -> results/hl_loop.json
+python delta_share.py       # Delta variance share vs y-ASSE -> results/delta_share.csv
+python h1_w1_check.py       # H1 ASSE vs the Wasserstein distance it estimates
+python sim_study.py select sev lognormal 100   # simulation: which structure does each score pick? (about 10 min per truth)
+python sim_study.py noise sev lognormal 60     # simulation: correct structure, sigma x 0.5/1/2
+python analyze_sim.py       # summary of the simulation runs -> results/sim_summary.json
+python node_convergence.py  # does H0/H1 keep falling as quadrature nodes grow? (uses results/roy_da_thetas.json)
+python da_sim_study.py 0 6 ln && python analyze_da_sim.py   # same simulation with the repo's DA+NCP fits (slow: about 3 min per fit)
+python adr_rfl.py fit sev lognormal   # what an ADR agent sees (diagnostics + WAIC, no ASSE)
+```
+
+`test_zoo.py` imports `rfl_pymc_ncp.py` from the repo root (the numpy reference likelihood).
 
 ---
 

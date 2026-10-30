@@ -1,0 +1,10 @@
+error,limit,elpd_waic,se,p_waic
+normal,gamma,-85.65,7.77,4.06
+normal,lognormal,-77.94,7.28,5.0
+normal,weibull,-81.39,7.24,5.93
+sev,gamma,-85.68,7.6,4.2
+sev,lognormal,-78.39,7.13,5.6
+sev,weibull,-81.0,6.84,4.74
+t,gamma,-85.44,7.39,5.0
+t,lognormal,-78.07,7.27,5.2
+t,weibull,-80.83,7.06,5.31
